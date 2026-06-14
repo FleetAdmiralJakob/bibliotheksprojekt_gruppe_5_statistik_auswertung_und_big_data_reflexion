@@ -1,9 +1,9 @@
 [project]
 name = "bibliotheksprojekt-gruppe-5-statistik-auswertung-und-big-data-reflexion"
 version = "0.1.0"
-description = "🔥🔥🔥🔝🔝🔝"
+description = "Desktop-Anwendung zur Verwaltung und Auswertung eines Bibliotheksbestands"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = []
 
 [dependency-groups]
@@ -11,3 +11,9 @@ dev = [
     "ruff>=0.15.17",
     "ty>=0.0.49",
 ]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["B", "E4", "E7", "E9", "F", "I", "SIM", "UP"]

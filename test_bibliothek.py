@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,15 +21,19 @@ class IsbnTests(unittest.TestCase):
 
 class AddBookTests(unittest.TestCase):
     def setUp(self):
-        temp_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        temp_file.close()
-        self.database_path = Path(temp_file.name)
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
+            self.database_path = Path(temp_file.name)
 
         schema_path = Path(__file__).parent / "sql_scripts" / "create_database.sql"
-        with sqlite3.connect(self.database_path) as connection:
+        with (
+            closing(sqlite3.connect(self.database_path)) as connection,
+            connection,
+        ):
             connection.executescript(schema_path.read_text(encoding="utf-8"))
 
-        self.database_patch = patch.object(database, "DATABASE_PATH", self.database_path)
+        self.database_patch = patch.object(
+            database, "DATABASE_PATH", self.database_path
+        )
         self.database_patch.start()
 
     def tearDown(self):
@@ -50,7 +55,7 @@ class AddBookTests(unittest.TestCase):
 
         add_book("978-0-306-40615-7", 3)
 
-        with sqlite3.connect(self.database_path) as connection:
+        with closing(sqlite3.connect(self.database_path)) as connection:
             book = connection.execute(
                 """
                 SELECT title, main_category, language, release_date, page_count
@@ -70,9 +75,7 @@ class AddBookTests(unittest.TestCase):
                 ("9780306406157",),
             ).fetchall()
 
-        self.assertEqual(
-            book, ("Test Book", "Science", "Englisch", "2026", 240)
-        )
+        self.assertEqual(book, ("Test Book", "Science", "Englisch", "2026", 240))
         self.assertEqual(author_count, 2)
         self.assertEqual(copies, [("new", "available")] * 3)
 

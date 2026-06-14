@@ -5,7 +5,13 @@ Dadurch müssen andere Dateien nicht selbst Verbindungen öffnen und schließen.
 """
 
 import sqlite3
+from collections.abc import Callable, Sequence
+from contextlib import closing
 from pathlib import Path
+from typing import Any
+
+type QueryParameters = Sequence[object]
+type QueryResult = list[tuple[Any, ...]]
 
 
 # ``__file__`` ist der Pfad dieser Python-Datei. Daraus bestimmen wir den
@@ -16,7 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "bibliothek.db"
 
 
-def createDatabase():
+def create_database() -> None:
     """Erstellt die Tabellen mit dem vorbereiteten SQL-Skript neu.
 
     Achtung: Das aktuelle SQL-Skript enthält DROP TABLE-Anweisungen. Diese
@@ -24,96 +30,49 @@ def createDatabase():
     Sie wird beim normalen Start der GUI nicht automatisch ausgeführt.
     """
 
-    # Verbindung zur SQLite-Datei öffnen. Existiert sie nicht, würde SQLite
-    # grundsätzlich eine neue Datei anlegen.
-    con = sqlite3.connect(DATABASE_PATH)
+    sql_script = (BASE_DIR / "sql_scripts" / "create_database.sql").read_text(
+        encoding="utf-8"
+    )
 
-    # Der Cursor ist das Objekt, über das SQL-Befehle ausgeführt werden.
-    cursor = con.cursor()
+    with closing(sqlite3.connect(DATABASE_PATH)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with connection:
+            connection.executescript(sql_script)
 
-    # SQLite prüft Fremdschlüssel nicht immer automatisch. Dieses PRAGMA
-    # aktiviert die Prüfung für die aktuelle Verbindung.
-    cursor.execute("PRAGMA foreign_keys = ON")
-
-    # ``with`` schließt die Datei automatisch, auch falls beim Lesen ein Fehler
-    # auftritt. UTF-8 sorgt für eine eindeutige Textkodierung.
-    with open(
-        BASE_DIR / "sql_scripts" / "create_database.sql",
-        "r",
-        encoding="utf-8",
-    ) as file:
-        sql_script = file.read()
-
-    try:
-        # executescript kann mehrere SQL-Anweisungen auf einmal ausführen.
-        cursor.executescript(sql_script)
-
-        # Änderungen werden erst mit commit dauerhaft gespeichert.
-        con.commit()
-        print("Alle Tabellen wurden erfolgreich erstellt.")
-
-    except Exception as e:
-        # Bei der manuellen Datenbankerstellung genügt hier zunächst eine
-        # Konsolenausgabe. Die GUI verwendet für Suchfehler einen Dialog.
-        print("Fehler:", e)
-
-    # Cursor und Verbindung immer explizit freigeben.
-    cursor.close()
-    con.close()
+    print("Alle Tabellen wurden erfolgreich erstellt.")
 
 
-def executeQuery(query, parameters=()):
+def execute_query(
+    query: str,
+    parameters: QueryParameters = (),
+) -> QueryResult:
     """Führt eine parametrisierte SQL-Abfrage aus und liefert alle Zeilen.
 
     ``query`` enthält SQL mit Fragezeichen-Platzhaltern.
     ``parameters`` enthält die dazugehörigen Werte in derselben Reihenfolge.
     """
 
-    # Für jeden Aufruf wird eine kurze, eigene Verbindung geöffnet.
-    con = sqlite3.connect(DATABASE_PATH)
-    cursor = con.cursor()
-
     # Eine leere Abfrage hat kein sinnvolles Ergebnis. Eine leere Liste ist für
     # Aufrufer leichter zu verarbeiten als None.
     if not query.strip():
-        cursor.close()
-        con.close()
         return []
 
     try:
-        # Parameter werden getrennt vom SQL übergeben. sqlite3 übernimmt
-        # korrektes Escaping und verhindert, dass Eingaben zu SQL-Code werden.
-        cursor.execute(query, parameters)
-
-        # fetchall liest alle gefundenen Zeilen als Liste von Tupeln.
-        result = cursor.fetchall()
-    except Exception as e:
+        with closing(sqlite3.connect(DATABASE_PATH)) as connection:
+            cursor = connection.execute(query, parameters)
+            return cursor.fetchall()
+    except sqlite3.Error as error:
         # Wir geben einen verständlicheren Fehlertyp an die GUI weiter.
-        # ``from e`` bewahrt zusätzlich die ursprüngliche Fehlerursache.
-        raise RuntimeError(f"Datenbankfehler: {e}") from e
-    finally:
-        # ``finally`` läuft bei Erfolg UND bei Fehlern. Dadurch bleiben keine
-        # offenen Datenbankverbindungen zurück.
-        cursor.close()
-        con.close()
-
-    return result
+        # ``from error`` bewahrt zusätzlich die ursprüngliche Fehlerursache.
+        raise RuntimeError(f"Datenbankfehler: {error}") from error
 
 
-def runTransaction(operation):
+def run_transaction[Result](
+    operation: Callable[[sqlite3.Cursor], Result],
+) -> Result:
     """Führt mehrere zusammengehörige Schreibzugriffe atomar aus."""
 
-    con = sqlite3.connect(DATABASE_PATH)
-    cursor = con.cursor()
-    cursor.execute("PRAGMA foreign_keys = ON")
-
-    try:
-        result = operation(cursor)
-        con.commit()
-        return result
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        cursor.close()
-        con.close()
+    with closing(sqlite3.connect(DATABASE_PATH)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with closing(connection.cursor()) as cursor, connection:
+            return operation(cursor)

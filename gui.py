@@ -11,16 +11,25 @@ wie SQL funktioniert, und der Datenbankcode muss nichts über Buttons wissen.
 """
 
 import tkinter as tk
-from typing import Tuple, Optional, List
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from queue import Empty, Queue
 from threading import Thread
+from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 
 # Wir importieren nur die Funktion, die die Oberfläche tatsächlich benötigt.
 # Die GUI gibt Suchbegriffe hinein und erhält eine Liste mit Büchern zurück.
-from bibliothek import add_book, delete_book, get_book_copies, search_books
+from bibliothek import (
+    BookMetadata,
+    add_book,
+    delete_book,
+    get_book_copies,
+    search_books,
+)
+
+type RGB = tuple[int, int, int]
 
 
 # In der Datenbank stehen englische Kategorien, in der deutschen Oberfläche
@@ -66,17 +75,21 @@ DESIGN_SYSTEM = {
 }
 
 
-def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+def _hex_to_rgb(hex_color: str) -> RGB:
     """Wandelt einen Hex‑Farbcode in ein RGB‑Tupel um.
 
     Tkinter erwartet Farben als Hex‑Strings, für Berechnungen werden sie jedoch
     zunächst in ihre drei Komponenten aufgeteilt.
     """
     hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    return (
+        int(hex_color[0:2], 16),
+        int(hex_color[2:4], 16),
+        int(hex_color[4:6], 16),
+    )
 
 
-def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
+def _rgb_to_hex(rgb: RGB) -> str:
     """Wandelt ein RGB‑Tupel in einen Hex‑Farbcode um."""
     return "#" + "".join(f"{c:02x}" for c in rgb)
 
@@ -138,6 +151,7 @@ COLORS = {
     "selection": _lighten(DESIGN_SYSTEM["primary"], 0.8),
 }
 
+
 class RoundedButton(tk.Canvas):
     """Ein Button mit abgerundeten Ecken.
 
@@ -153,15 +167,15 @@ class RoundedButton(tk.Canvas):
         master: tk.Misc,
         *,
         text: str,
-        command: Optional[callable] = None,
+        command: Callable[[], None] | None = None,
         radius: int = 12,
-        padding: Tuple[int, int] = (16, 8),
-        bg: Optional[str] = None,
-        fg: Optional[str] = None,
-        active_bg: Optional[str] = None,
-        disabled_bg: Optional[str] = None,
-        disabled_fg: Optional[str] = None,
-        font: Optional[Tuple[str, int]] = None,
+        padding: tuple[int, int] = (16, 8),
+        bg: str | None = None,
+        fg: str | None = None,
+        active_bg: str | None = None,
+        disabled_bg: str | None = None,
+        disabled_fg: str | None = None,
+        font: tuple[str, int] | None = None,
         **kwargs,
     ) -> None:
         # Hintergrund des Canvas entspricht dem Hintergrund des Elternwidgets.
@@ -184,31 +198,15 @@ class RoundedButton(tk.Canvas):
         # Farben für deaktivierten Zustand
         self.disabled_bg = disabled_bg or _lighten(self.bg, 0.4)
         self.disabled_fg = disabled_fg or _lighten(self.fg, 0.4)
-        # Zustandsverwaltung
-        self.state = "normal"
+        self.enabled = True
         # Schriftart bestimmen – wir nutzen die Standard-TkFont, falls keine
         # explizite Schrift angegeben wurde.
         if font is None:
-            try:
-                # TkDefaultFont liefert die Standard-Schrift des Systems.
-                import tkinter.font as tkfont
-
-                self.font = tkfont.nametofont("TkDefaultFont").copy()
-                # Füge Fettung hinzu, damit Buttons präsenter wirken.
-                self.font.configure(weight="bold")
-            except Exception:
-                self.font = None
+            self.font = tkfont.nametofont("TkDefaultFont").copy()
+            self.font.configure(weight="bold")
         else:
-            # Falls der Benutzer ein Tupel wie ("Helvetica", 12) übergibt.
-            try:
-                import tkinter.font as tkfont
+            self.font = tkfont.Font(root=self, font=font)
 
-                self.font = tkfont.Font(master=self, font=font)
-            except Exception:
-                self.font = None
-        # Interne IDs für das Polygon und den Text
-        self._rect_id: Optional[int] = None
-        self._text_id: Optional[int] = None
         # Zeichne den Button initial
         self._draw(self.bg, self.fg)
         # Events für Hover und Klick
@@ -216,7 +214,7 @@ class RoundedButton(tk.Canvas):
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_press)
 
-    def _measure_text(self) -> Tuple[int, int]:
+    def _measure_text(self) -> tuple[int, int]:
         """Gibt die Breite und Höhe des Textes in Pixeln zurück."""
         # Temporärer Text, um die Bounding Box zu bestimmen
         temp_id = self.create_text(0, 0, text=self.text, font=self.font, anchor="nw")
@@ -262,66 +260,92 @@ class RoundedButton(tk.Canvas):
         # Canvas-Größe anpassen
         self.config(width=width, height=height)
 
-    def _on_enter(self, event: tk.Event) -> None:
-        if self.state == "normal":
+    def _on_enter(self, _event: tk.Event) -> None:
+        if self.enabled:
             self.itemconfig(self._rect_id, fill=self.active_bg, outline=self.active_bg)
 
-    def _on_leave(self, event: tk.Event) -> None:
-        if self.state == "normal":
+    def _on_leave(self, _event: tk.Event) -> None:
+        if self.enabled:
             self.itemconfig(self._rect_id, fill=self.bg, outline=self.bg)
 
-    def _on_press(self, event: tk.Event) -> None:
-        if self.state == "normal" and self.command:
+    def _on_press(self, _event: tk.Event) -> None:
+        if self.enabled and self.command:
             # Visual feedback für Klick
             self.itemconfig(self._rect_id, fill=self.active_bg, outline=self.active_bg)
             # Nach kurzer Verzögerung zur ursprünglichen Farbe zurückkehren
-            self.after(100, lambda: self.itemconfig(self._rect_id, fill=self.bg, outline=self.bg))
+            self.after(
+                100,
+                lambda: self.itemconfig(
+                    self._rect_id,
+                    fill=self.bg,
+                    outline=self.bg,
+                ),
+            )
             self.command()
 
-    def configure(self, **kwargs) -> None:  # type: ignore[override]
-        """Erlaubt das Ändern des Zustands oder anderer Parameter."""
-        # Insbesondere erlauben wir die Einstellung des States über configure
-        state = kwargs.pop("state", None)
-        if state is not None:
-            self.state = state
-            if state == "disabled":
-                self.itemconfig(self._rect_id, fill=self.disabled_bg, outline=self.disabled_bg)
-                self.itemconfig(self._text_id, fill=self.disabled_fg)
-            else:
-                self.itemconfig(self._rect_id, fill=self.bg, outline=self.bg)
-                self.itemconfig(self._text_id, fill=self.fg)
-        # Andere Konfigurationsoptionen an Canvas weiterreichen
-        if kwargs:
-            super().configure(**kwargs)
+    def set_enabled(self, enabled: bool) -> None:
+        """Aktiviert oder deaktiviert den Button."""
+
+        self.enabled = enabled
+        background = self.bg if enabled else self.disabled_bg
+        foreground = self.fg if enabled else self.disabled_fg
+        self.itemconfig(self._rect_id, fill=background, outline=background)
+        self.itemconfig(self._text_id, fill=foreground)
+
+    def set_command(self, command: Callable[[], None]) -> None:
+        """Setzt die Aktion, die beim Klick ausgeführt wird."""
+
+        self.command = command
+
 
 # Eine kleine Hilfsfunktion erzeugt eine abgerundete Polygonform für den Canvas.
-def _rounded_polygon_points(width: int, height: int, r: int) -> List[int]:
+def _rounded_polygon_points(width: int, height: int, r: int) -> list[int]:
     """Berechnet Eckpunkte für ein Rechteck mit abgerundeten Ecken.
 
     Die Liste enthält 20 Koordinatenpaare (insgesamt 40 Werte). Mehrfach
     vorkommende Punkte sorgen dafür, dass Tkinter die Kurven sauber glättet.
     """
     return [
-        r, 0,
-        r, 0,
-        width - r, 0,
-        width - r, 0,
-        width, 0,
-        width, r,
-        width, r,
-        width, height - r,
-        width, height - r,
-        width, height,
-        width - r, height,
-        width - r, height,
-        r, height,
-        r, height,
-        0, height,
-        0, height - r,
-        0, height - r,
-        0, r,
-        0, r,
-        0, 0,
+        r,
+        0,
+        r,
+        0,
+        width - r,
+        0,
+        width - r,
+        0,
+        width,
+        0,
+        width,
+        r,
+        width,
+        r,
+        width,
+        height - r,
+        width,
+        height - r,
+        width,
+        height,
+        width - r,
+        height,
+        width - r,
+        height,
+        r,
+        height,
+        r,
+        height,
+        0,
+        height,
+        0,
+        height - r,
+        0,
+        height - r,
+        0,
+        r,
+        0,
+        r,
+        0,
+        0,
     ]
 
 
@@ -339,9 +363,9 @@ class RoundedFrame(tk.Frame):
         master: tk.Misc,
         *,
         radius: int = 16,
-        bg: Optional[str] = None,
-        bordercolor: Optional[str] = None,
-        padding: Tuple[int, int] = (0, 0),
+        bg: str | None = None,
+        bordercolor: str | None = None,
+        padding: tuple[int, int] = (0, 0),
         **kwargs,
     ) -> None:
         # Hintergrundfarben und Randfarben aus dem Design übernehmen, falls
@@ -401,7 +425,7 @@ class RoundedFrame(tk.Frame):
             anchor="nw",
         )
         # Die ID des gezeichneten Polygons für den runden Hintergrund.
-        self._rect_id: Optional[int] = None
+        self._rect_id: int | None = None
         # Bei jeder Größenänderung des Canvas aktualisieren wir Form und Größe.
         self.canvas.bind("<Configure>", self._on_configure)
 
@@ -413,7 +437,9 @@ class RoundedFrame(tk.Frame):
         # angepasst. Dabei bleibt die obere linke Ecke an der selben Position.
         inner_width = max(0, width - 2 * self.padding[0])
         inner_height = max(0, height - 2 * self.padding[1])
-        self.canvas.itemconfig(self._inner_window_id, width=inner_width, height=inner_height)
+        self.canvas.itemconfig(
+            self._inner_window_id, width=inner_width, height=inner_height
+        )
         # Punkte für das abgerundete Polygon berechnen
         r = min(self.radius, width // 2, height // 2)
         # Wir ziehen 1 Pixel von Breite und Höhe ab, damit der Rand innen
@@ -430,6 +456,7 @@ class RoundedFrame(tk.Frame):
             width=1,
             smooth=True,
         )
+
 
 # Datenbankwerte für Verfügbarkeit und Zustand werden in der Oberfläche
 # freundlich übersetzt. Unbekannte Werte werden später einfach unverändert
@@ -509,12 +536,12 @@ class LibraryApp:
         # Hier merken wir uns den aktuellen Sortierzustand:
         # ``None`` bedeutet, dass noch keine Spalte gewählt wurde.
         # ``False`` steht für aufsteigend, ``True`` für absteigend.
-        self.sort_column = None
+        self.sort_column: str | None = None
         self.sort_descending = False
 
         # Geöffnete Exemplarseiten werden hier nach ISBN gemerkt. So wird ein
         # bereits offenes Detailfenster nur nach vorne geholt statt dupliziert.
-        self.copy_detail_windows = {}
+        self.copy_detail_windows: dict[str, tk.Toplevel] = {}
 
         # Zuerst definieren wir das Aussehen, danach werden die Widgets gebaut.
         # So kennen alle Widgets ihre Styles bereits bei der Erstellung.
@@ -766,7 +793,9 @@ class LibraryApp:
         # seiner Grid-Zelle, es füllt die verfügbare Breite also aus.
         category.grid(row=2, column=2, sticky="ew", padx=(0, 12), pady=(6, 0))
 
-        self._add_field(search_card.inner_frame, "ISBN", self.isbn_var, 1, 3, right_padding=0)
+        self._add_field(
+            search_card.inner_frame, "ISBN", self.isbn_var, 1, 3, right_padding=0
+        )
 
         # Ein eigener Frame hält beide Buttons als zusammengehörige Gruppe.
         # ``sticky="e"`` richtet diese Gruppe am rechten Rand aus. Wir
@@ -865,7 +894,6 @@ class LibraryApp:
             self.results.heading(
                 column,
                 text=self.column_headings[column],
-
                 # Wichtiges Lambda-Detail: ``selected_column=column`` speichert
                 # den aktuellen Schleifenwert sofort. Ohne diesen Standardwert
                 # würden später alle Überschriften auf die letzte Spalte zeigen.
@@ -998,16 +1026,15 @@ class LibraryApp:
                     isbn or "",
                     title or "",
                     author or "",
-
                     # Die englische Kategorie wird nur für die Anzeige übersetzt.
-                    CATEGORIES.get(category_name, category_name) if category_name else "",
+                    CATEGORIES.get(category_name, category_name)
+                    if category_name
+                    else "",
                     language or "",
-
                     # Die Datenbank speichert vollständige Daten im technisch
                     # üblichen ISO-Format JJJJ-MM-TT. In der deutschen
                     # Oberfläche zeigen wir sie als TT.MM.JJJJ an.
                     self._format_date(release_date),
-
                     # COUNT(*) liefert immer eine Zahl, auch wenn sie 0 ist.
                     # Deshalb verwenden wir hier nicht ``or ""``: Eine Null
                     # ist eine wichtige Information und soll sichtbar bleiben.
@@ -1024,9 +1051,7 @@ class LibraryApp:
 
         # Kurze Rückmeldung, auch wenn keine Treffer vorhanden sind.
         self.status_var.set(
-            f"{count} {'Treffer' if count == 1 else 'Treffer'} gefunden"
-            if count
-            else "Keine passenden Bücher gefunden"
+            f"{count} Treffer gefunden" if count else "Keine passenden Bücher gefunden"
         )
 
     def sort_results(self, column):
@@ -1047,6 +1072,10 @@ class LibraryApp:
     def _apply_sort(self):
         """Sortiert vorhandene Treeview-Zeilen und aktualisiert den Pfeil."""
 
+        column = self.sort_column
+        if column is None:
+            return
+
         # Treeview speichert jede Zeile unter einer internen ID wie "I001".
         # Wir sortieren diese IDs und verschieben danach die zugehörigen Zeilen.
         items = list(self.results.get_children())
@@ -1058,11 +1087,11 @@ class LibraryApp:
 
         for item in items:
             # ``set(item, column)`` liest den sichtbaren Zelleninhalt.
-            value = self.results.set(item, self.sort_column).strip()
+            value = self.results.set(item, column).strip()
             target = populated if value else empty
 
             # Gespeichert werden der vergleichbare Sortierwert und die Zeilen-ID.
-            target.append((self._sort_value(self.sort_column, value), item))
+            target.append((self._sort_value(column, value), item))
 
         # Python sortiert standardmäßig aufsteigend. ``reverse=True`` dreht die
         # Reihenfolge für eine absteigende Sortierung um.
@@ -1085,7 +1114,7 @@ class LibraryApp:
         # Auch textlich anzeigen, nach welcher Richtung sortiert wurde.
         direction = "absteigend" if self.sort_descending else "aufsteigend"
         self.status_var.set(
-            f"Sortiert nach {self.column_headings[self.sort_column]} ({direction})"
+            f"Sortiert nach {self.column_headings[column]} ({direction})"
         )
 
     @staticmethod
@@ -1275,9 +1304,7 @@ class LibraryApp:
 
         detail.protocol("WM_DELETE_WINDOW", close_detail)
 
-        container = ttk.Frame(
-            detail, style="App.TFrame", padding=(28, 24, 28, 20)
-        )
+        container = ttk.Frame(detail, style="App.TFrame", padding=(28, 24, 28, 20))
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
         container.rowconfigure(2, weight=1)
@@ -1320,9 +1347,9 @@ class LibraryApp:
         copies_card.inner_frame.columnconfigure(0, weight=1)
         copies_card.inner_frame.rowconfigure(2, weight=1)
 
-        ttk.Label(copies_card.inner_frame, text="Exemplare", style="Section.TLabel").grid(
-            row=0, column=0, sticky="w"
-        )
+        ttk.Label(
+            copies_card.inner_frame, text="Exemplare", style="Section.TLabel"
+        ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             copies_card.inner_frame,
             text=self._copies_summary(copies),
@@ -1331,7 +1358,10 @@ class LibraryApp:
 
         columns = ("copy_id", "state", "availability")
         copy_table = ttk.Treeview(
-            copies_card.inner_frame, columns=columns, show="headings", selectmode="browse"
+            copies_card.inner_frame,
+            columns=columns,
+            show="headings",
+            selectmode="browse",
         )
 
         copy_table.heading("copy_id", text="Exemplar-ID")
@@ -1342,9 +1372,7 @@ class LibraryApp:
         copy_table.column("availability", width=180, minwidth=120, anchor="w")
 
         for tag, (background, foreground) in AVAILABILITY_ROW_STYLES.items():
-            copy_table.tag_configure(
-                tag, background=background, foreground=foreground
-            )
+            copy_table.tag_configure(tag, background=background, foreground=foreground)
 
         if copies:
             for copy_id, state, availability in copies:
@@ -1479,7 +1507,6 @@ class LibraryApp:
         self.status_var.set("Suchfilter zurückgesetzt")
         self.title_entry.focus_set()
 
-
     def open_add_book_dialog(self):
         """Öffnet das Formular zum Eintragen eines neuen Buches."""
 
@@ -1559,7 +1586,7 @@ class LibraryApp:
         add_btn.pack(side="left")
         submitting = False
 
-        def finish_success(metadata):
+        def finish_success(metadata: BookMetadata) -> None:
             if not dialog.winfo_exists():
                 return
             dialog.destroy()
@@ -1572,56 +1599,52 @@ class LibraryApp:
                 parent=self.root,
             )
 
-        def finish_error(error):
+        def finish_error(error: Exception) -> None:
             nonlocal submitting
             if not dialog.winfo_exists():
                 return
             submitting = False
-            add_btn.configure(state="normal")
-            cancel_btn.configure(state="normal")
+            add_btn.set_enabled(True)
+            cancel_btn.set_enabled(True)
             dialog_status.set("Das Buch konnte nicht hinzugefügt werden.")
-            messagebox.showerror(
-                "Hinzufügen fehlgeschlagen", str(error), parent=dialog
-            )
+            messagebox.showerror("Hinzufügen fehlgeschlagen", str(error), parent=dialog)
 
-        def submit():
+        def submit() -> None:
             nonlocal submitting
             if submitting:
                 return
             submitting = True
             isbn = isbn_var.get().strip()
             copy_count = copies_var.get().strip()
-            add_btn.configure(state="disabled")
-            cancel_btn.configure(state="disabled")
+            add_btn.set_enabled(False)
+            cancel_btn.set_enabled(False)
             dialog_status.set("Buchdaten werden geladen und gespeichert ...")
-            result_queue = Queue()
+            result_queue: Queue[BookMetadata | Exception] = Queue()
 
-            def worker():
+            def worker() -> None:
                 try:
-                    metadata = add_book(isbn, copy_count)
+                    result_queue.put(add_book(isbn, copy_count))
                 except Exception as error:
-                    result_queue.put(("error", error))
-                else:
-                    result_queue.put(("success", metadata))
+                    result_queue.put(error)
 
             Thread(target=worker, daemon=True).start()
 
-            def poll_result():
+            def poll_result() -> None:
                 try:
-                    result_type, value = result_queue.get_nowait()
+                    result = result_queue.get_nowait()
                 except Empty:
                     if dialog.winfo_exists():
                         self.root.after(50, poll_result)
                     return
 
-                if result_type == "success":
-                    finish_success(value)
+                if isinstance(result, Exception):
+                    finish_error(result)
                 else:
-                    finish_error(value)
+                    finish_success(result)
 
             self.root.after(50, poll_result)
 
-        add_btn.configure(command=submit)
+        add_btn.set_command(submit)
         dialog.bind("<Return>", lambda _event: submit())
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         isbn_entry.focus_set()

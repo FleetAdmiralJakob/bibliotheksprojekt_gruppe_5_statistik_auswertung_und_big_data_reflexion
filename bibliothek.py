@@ -4,15 +4,41 @@ Die GUI kennt nur ``search_books``. Diese Funktion übersetzt die vier
 Suchfelder in eine SQL-Abfrage und übergibt sie an die Datenbankschicht.
 """
 
-# ``executeQuery`` öffnet die Datenbank, führt SQL aus und schließt sie wieder.
+# ``execute_query`` öffnet die Datenbank, führt SQL aus und schließt sie wieder.
 import json
 import re
+import sqlite3
+from collections.abc import Mapping, Sequence
+from typing import Any, TypedDict, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from database import executeQuery, runTransaction
+from database import execute_query, run_transaction
+
+type BookRow = tuple[
+    str,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    int,
+]
+type BookCopy = tuple[str, str | None, str | None]
+type JsonObject = dict[str, Any]
+
+
+class BookMetadata(TypedDict):
+    isbn: str
+    title: str
+    authors: list[str]
+    publisher: str
+    release_date: str
+    page_count: int
+    language: str
+    main_category: str
 
 
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
@@ -28,7 +54,12 @@ LANGUAGES = {
 }
 
 
-def search_books(book_query: str, author_query: str, genre_query: str, isbn_query: str):
+def search_books(
+    book_query: str,
+    author_query: str,
+    genre_query: str,
+    isbn_query: str,
+) -> list[BookRow]:
     """Sucht Bücher anhand optionaler Teiltexte und einer Kategorie.
 
     Die vier Parameter kommen direkt aus den Suchfeldern der Oberfläche.
@@ -105,10 +136,10 @@ def search_books(book_query: str, author_query: str, genre_query: str, isbn_quer
 
     # Die Datenbankschicht führt die vorbereitete Abfrage aus und liefert alle
     # Treffer zurück. Diese Funktion reicht das Ergebnis an die GUI weiter.
-    return executeQuery(query, parameters)
+    return cast(list[BookRow], execute_query(query, parameters))
 
 
-def get_book_copies(isbn_value: str):
+def get_book_copies(isbn_value: str) -> list[BookCopy]:
     """Liefert alle Exemplare eines Buches mit Zustand und Verfügbarkeit.
 
     Die GUI ruft diese Funktion auf, sobald ein Buch in der Ergebnisliste
@@ -118,7 +149,7 @@ def get_book_copies(isbn_value: str):
 
     isbn = normalize_isbn(isbn_value)
 
-    if not executeQuery("SELECT 1 FROM books WHERE isbn = ?", (isbn,)):
+    if not execute_query("SELECT 1 FROM books WHERE isbn = ?", (isbn,)):
         raise ValueError("Ein Buch mit dieser ISBN ist nicht vorhanden.")
 
     query = """
@@ -131,7 +162,7 @@ def get_book_copies(isbn_value: str):
     ORDER BY copy_id COLLATE NOCASE
     """
 
-    return executeQuery(query, (isbn,))
+    return cast(list[BookCopy], execute_query(query, (isbn,)))
 
 
 def normalize_isbn(value: str) -> str:
@@ -156,7 +187,7 @@ def normalize_isbn(value: str) -> str:
     raise ValueError("Bitte eine gültige ISBN-10 oder ISBN-13 eingeben.")
 
 
-def _load_json(url):
+def _load_json(url: str) -> JsonObject | None:
     request = Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urlopen(request, timeout=10) as response:
@@ -164,14 +195,16 @@ def _load_json(url):
     except HTTPError as error:
         if error.code == 404:
             return None
-        raise RuntimeError(f"Die Buch-API antwortet mit Fehler {error.code}.") from error
+        raise RuntimeError(
+            f"Die Buch-API antwortet mit Fehler {error.code}."
+        ) from error
     except (URLError, TimeoutError, OSError) as error:
         raise RuntimeError("Die Buch-API ist momentan nicht erreichbar.") from error
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise RuntimeError("Die Buch-API hat ungültige Daten geliefert.") from error
 
 
-def _language_from_edition(edition):
+def _language_from_edition(edition: Mapping[str, Any] | None) -> str:
     languages = edition.get("languages", []) if edition else []
     if not languages:
         return ""
@@ -179,7 +212,7 @@ def _language_from_edition(edition):
     return LANGUAGES.get(code, code.upper())
 
 
-def _category_from_subjects(subjects):
+def _category_from_subjects(subjects: Sequence[Mapping[str, Any]]) -> str:
     names = [subject.get("name", "") for subject in subjects]
     normalized = {name.casefold() for name in names}
     combined = " ".join(names).casefold()
@@ -188,7 +221,9 @@ def _category_from_subjects(subjects):
         return "Fiction"
     if normalized & {"nonfiction", "non-fiction", "non fiction", "sachbuch"}:
         return "Non-Fiction"
-    if any(word in combined for word in ("computer", "technology", "software", "technik")):
+    if any(
+        word in combined for word in ("computer", "technology", "software", "technik")
+    ):
         return "Technology"
     if any(word in combined for word in ("science", "wissenschaft", "mathemat")):
         return "Science"
@@ -197,12 +232,10 @@ def _category_from_subjects(subjects):
     return "Other"
 
 
-def fetch_book_metadata(isbn: str):
+def fetch_book_metadata(isbn: str) -> BookMetadata:
     """Lädt die Metadaten einer ISBN aus der Open‑Library‑API."""
 
-    query = urlencode(
-        {"bibkeys": f"ISBN:{isbn}", "jscmd": "data", "format": "json"}
-    )
+    query = urlencode({"bibkeys": f"ISBN:{isbn}", "jscmd": "data", "format": "json"})
     response = _load_json(f"{OPEN_LIBRARY_BOOKS_URL}?{query}")
     book = (response or {}).get(f"ISBN:{isbn}")
     if not book:
@@ -240,7 +273,13 @@ def fetch_book_metadata(isbn: str):
     }
 
 
-def _find_or_create_named_record(cursor, table, id_column, prefix, name):
+def _find_or_create_named_record(
+    cursor: sqlite3.Cursor,
+    table: str,
+    id_column: str,
+    prefix: str,
+    name: str,
+) -> str | None:
     if not name:
         return None
 
@@ -265,15 +304,15 @@ def _find_or_create_named_record(cursor, table, id_column, prefix, name):
     return record_id
 
 
-def delete_book(isbn_value: str):
+def delete_book(isbn_value: str) -> str:
     """Löscht ein Buch mit seinen zugehörigen Autoren-Zuordnungen und Exemplaren."""
 
     isbn = normalize_isbn(isbn_value)
 
-    if not executeQuery("SELECT 1 FROM books WHERE isbn = ?", (isbn,)):
+    if not execute_query("SELECT 1 FROM books WHERE isbn = ?", (isbn,)):
         raise ValueError("Ein Buch mit dieser ISBN ist nicht vorhanden.")
 
-    def delete_existing_book(cursor):
+    def delete_existing_book(cursor: sqlite3.Cursor) -> None:
         # Erst abhängige Datensätze löschen, danach den eigentlichen Bucheintrag.
         # Dadurch funktioniert das auch, wenn die Tabellen per Fremdschlüssel
         # miteinander verbunden sind.
@@ -284,30 +323,30 @@ def delete_book(isbn_value: str):
         if cursor.rowcount == 0:
             raise ValueError("Ein Buch mit dieser ISBN ist nicht vorhanden.")
 
-    runTransaction(delete_existing_book)
+    run_transaction(delete_existing_book)
     return isbn
 
 
-def add_book(isbn_value: str, copy_count: int):
+def add_book(isbn_value: str, copy_count: int | str) -> BookMetadata:
     """Lädt Metadaten und speichert ein neues Buch mit seinen Exemplaren."""
 
     isbn = normalize_isbn(isbn_value)
     try:
         copy_count = int(copy_count)
     except (TypeError, ValueError) as error:
-        raise ValueError("Die Anzahl der Exemplare muss eine ganze Zahl sein.") from error
+        raise ValueError(
+            "Die Anzahl der Exemplare muss eine ganze Zahl sein."
+        ) from error
     if copy_count < 1 or copy_count > 999:
         raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
 
-    if executeQuery("SELECT 1 FROM books WHERE isbn = ?", (isbn,)):
+    if execute_query("SELECT 1 FROM books WHERE isbn = ?", (isbn,)):
         raise ValueError("Ein Buch mit dieser ISBN ist bereits vorhanden.")
 
     metadata = fetch_book_metadata(isbn)
 
-    def insert_book(cursor):
-        if cursor.execute(
-            "SELECT 1 FROM books WHERE isbn = ?", (isbn,)
-        ).fetchone():
+    def insert_book(cursor: sqlite3.Cursor) -> None:
+        if cursor.execute("SELECT 1 FROM books WHERE isbn = ?", (isbn,)).fetchone():
             raise ValueError("Ein Buch mit dieser ISBN ist bereits vorhanden.")
 
         publisher_id = _find_or_create_named_record(
@@ -348,5 +387,5 @@ def add_book(isbn_value: str, copy_count: int):
             [(f"{isbn}-{number:03}", isbn) for number in range(1, copy_count + 1)],
         )
 
-    runTransaction(insert_book)
+    run_transaction(insert_book)
     return metadata
