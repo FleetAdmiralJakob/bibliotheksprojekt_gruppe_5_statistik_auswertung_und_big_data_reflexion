@@ -1,4 +1,4 @@
-"""Fachlogik für Katalogsuche und Buchaufnahme.
+"""Fachlogik für Buchaufnahme und Buchlöschung.
 
 Dieses Modul prüft Benutzereingaben und übersetzt externe Buchmetadaten. Der
 gespeicherte Bibliotheksbestand liegt hinter dem Interface von
@@ -14,7 +14,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from database import Bibliotheksbestand
-from models import BookCopy, BookMetadata, BookSearchResult
+from models import BookMetadata
 
 type JsonObject = dict[str, Any]
 
@@ -34,31 +34,6 @@ LANGUAGES = {
 # Objekt durch einen Bestand mit temporärer SQLite-Datei, ohne Pfadkonstanten
 # oder interne Datenbankfunktionen zu verändern.
 _BESTAND = Bibliotheksbestand()
-
-
-def search_books(
-    book_query: str,
-    author_query: str,
-    genre_query: str,
-    isbn_query: str,
-) -> list[BookSearchResult]:
-    """Sucht Bücher anhand optionaler Teiltexte und einer Kategorie."""
-
-    # Die Fachlogik reicht Suchwerte weiter. Wie Tabellen verbunden und
-    # Ergebnisse abgebildet werden, entscheidet allein der Bibliotheksbestand.
-    return _BESTAND.search_books(
-        book_query=book_query,
-        author_query=author_query,
-        category_query=genre_query,
-        isbn_query=isbn_query,
-    )
-
-
-def get_book_copies(isbn_value: str) -> list[BookCopy]:
-    """Prüft die ISBN und liefert alle gespeicherten Exemplare des Buches."""
-
-    isbn = normalize_isbn(isbn_value)
-    return _BESTAND.get_book_copies(isbn)
 
 
 def normalize_isbn(value: str) -> str:

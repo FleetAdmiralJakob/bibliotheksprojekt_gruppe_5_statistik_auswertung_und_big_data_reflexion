@@ -2,54 +2,45 @@
 
 Dieses Modul enthält ausschließlich die Oberfläche und deren Bedienlogik:
 
-1. Tkinter zeichnet Fenster, Eingabefelder, Buttons und die Ergebnistabelle.
-2. ``search_books`` aus ``bibliothek.py`` übernimmt die fachliche Suche.
-3. ``database.py`` kümmert sich eine Ebene tiefer um die SQLite-Datenbank.
+1. Tkinter zeichnet Fenster, Eingabefelder, Buttons und Tabellen.
+2. ``Katalogansicht`` liefert fertig aufbereitete Buch- und Exemplarwerte.
+3. ``Bibliotheksbestand`` hält SQLite hinter seinem eigenen Interface.
 
-Diese Trennung ist absichtlich gewählt. Dadurch muss die GUI nicht wissen,
-wie SQL funktioniert, und der Datenbankcode muss nichts über Buttons wissen.
+Dadurch besitzt die GUI weder SQL-Wissen noch fachliche Sortier- oder
+Übersetzungsregeln. Sie bleibt für Widgets, Farben und Dialoge zuständig.
 """
 
 import tkinter as tk
-from collections import Counter
 from collections.abc import Callable
-from datetime import datetime
 from queue import Empty, Queue
 from threading import Thread
 from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 from typing import Literal, TypedDict
 
-# Wir importieren nur die Funktion, die die Oberfläche tatsächlich benötigt.
-# Die GUI gibt Suchbegriffe hinein und erhält eine Liste mit Büchern zurück.
-from bibliothek import (
-    BookMetadata,
-    add_book,
-    delete_book,
-    get_book_copies,
-    search_books,
+# Schreiben und Löschen bleiben Teil des Buchlebenszyklus. Die lesende
+# Katalogansicht erhält dagegen direkt den Bibliotheksbestand.
+from bibliothek import add_book, delete_book
+from database import Bibliotheksbestand
+from katalogansicht import (
+    Katalogansicht,
+    Katalogseite,
+    Katalogsuche,
+    Katalogzeile,
+    Kategorie,
+    Sortierfeld,
+    Sortierung,
+    Verfuegbarkeitsklasse,
 )
+from models import BookMetadata
 
 type RGB = tuple[int, int, int]
 type ActionButtonVariant = Literal["primary", "secondary"]
 
 
-# In der Datenbank stehen englische Kategorien, in der deutschen Oberfläche
-# sollen aber deutsche Namen erscheinen. Dieses Dictionary ist eine
-# Übersetzungstabelle: links steht der Datenbankwert, rechts der Anzeigetext.
-CATEGORIES = {
-    "Fiction": "Belletristik",
-    "Non-Fiction": "Sachbuch",
-    "Science": "Wissenschaft",
-    "History": "Geschichte",
-    "Technology": "Technologie",
-    "Other": "Sonstiges",
-}
-
-# Für eine Suche brauchen wir die Übersetzung auch rückwärts:
-# "Wissenschaft" in der Auswahlbox muss wieder zu "Science" werden.
-# Die Dictionary Comprehension erzeugt automatisch das umgedrehte Dictionary.
-CATEGORY_BY_LABEL = {label: value for value, label in CATEGORIES.items()}
+# Diese Auswahl bedeutet bewusst keinen Kategorie-Filter. Alle konkreten
+# Kategorien und ihre Übersetzung besitzt das Katalogansicht-Interface.
+ALL_CATEGORIES_LABEL = "Alle Kategorien"
 
 # -----------------------------------------------------------------------------
 # Design System
@@ -510,31 +501,6 @@ class RoundedFrame(tk.Frame):
         )
 
 
-# Datenbankwerte für Verfügbarkeit und Zustand werden in der Oberfläche
-# freundlich übersetzt. Unbekannte Werte werden später einfach unverändert
-# angezeigt, damit keine Information verloren geht.
-AVAILABILITY_LABELS = {
-    "available": "Verfügbar",
-    "borrowed": "Ausgeliehen",
-    "borrowed_out": "Ausgeliehen",
-    "lent": "Ausgeliehen",
-    "loaned": "Ausgeliehen",
-    "reserved": "Reserviert",
-    "unavailable": "Nicht verfügbar",
-    "maintenance": "In Bearbeitung",
-    "damaged": "Beschädigt",
-    "lost": "Verloren",
-}
-
-STATE_LABELS = {
-    "new": "Neu",
-    "good": "Gut",
-    "used": "Gebraucht",
-    "worn": "Abgenutzt",
-    "damaged": "Beschädigt",
-    "lost": "Verloren",
-}
-
 # Jedes Tag bekommt in der Exemplartabelle eine eigene Farbe. Die Tag-Namen
 # bleiben technisch/englisch, weil sie nicht sichtbar sind.
 AVAILABILITY_ROW_STYLES = {
@@ -544,6 +510,16 @@ AVAILABILITY_ROW_STYLES = {
     "availability_unavailable": ("#E5E7EB", "#374151"),
     "availability_problem": ("#FFEDD5", "#9A3412"),
     "availability_unknown": (COLORS["surface"], COLORS["text"]),
+}
+
+# Die Katalogansicht klassifiziert Verfügbarkeiten fachlich. Tkinter übersetzt
+# diese Klassen ausschließlich in die sichtbaren Farb-Tags seiner Tabelle.
+AVAILABILITY_TAG_BY_CLASS = {
+    Verfuegbarkeitsklasse.VERFUEGBAR: "availability_available",
+    Verfuegbarkeitsklasse.AUSGELIEHEN: "availability_borrowed",
+    Verfuegbarkeitsklasse.RESERVIERT: "availability_reserved",
+    Verfuegbarkeitsklasse.PROBLEM: "availability_problem",
+    Verfuegbarkeitsklasse.UNBEKANNT: "availability_unknown",
 }
 
 
@@ -573,12 +549,16 @@ class LibraryApp:
         self.root.minsize(820, 560)
         self.root.configure(background=COLORS["background"])
 
+        # Die Katalogansicht ist die einzige lesende Quelle für sichtbare Buch-
+        # und Exemplarwerte. Sie arbeitet stateless auf dem tiefen Bestand.
+        self.katalog = Katalogansicht(Bibliotheksbestand())
+
         # StringVar verbindet einen Python-Textwert mit einem Tkinter-Widget.
         # Wenn ein Benutzer tippt, liefert ``variable.get()`` den aktuellen
         # Inhalt. Mit ``variable.set(...)`` kann der Inhalt geändert werden.
         self.title_var = tk.StringVar()
         self.author_var = tk.StringVar()
-        self.category_var = tk.StringVar(value="Alle Kategorien")
+        self.category_var = tk.StringVar(value=ALL_CATEGORIES_LABEL)
         self.isbn_var = tk.StringVar()
 
         # Die Statusvariable wird mit dem Text unterhalb der Tabelle verbunden.
@@ -590,6 +570,10 @@ class LibraryApp:
         # ``False`` steht für aufsteigend, ``True`` für absteigend.
         self.sort_column: str | None = None
         self.sort_descending = False
+
+        # Die sichtbaren Zellen sind keine Fachwerte. Diese Abbildung bewahrt
+        # die zuletzt geladenen, typisierten Zeilen für Bestätigungsdialoge.
+        self.catalog_rows_by_isbn: dict[str, Katalogzeile] = {}
 
         # Geöffnete Exemplarseiten werden hier nach ISBN gemerkt. So wird ein
         # bereits offenes Detailfenster nur nach vorne geholt statt dupliziert.
@@ -799,7 +783,7 @@ class LibraryApp:
         category = ttk.Combobox(
             search_card.inner_frame,
             textvariable=self.category_var,
-            values=["Alle Kategorien", *CATEGORIES.values()],
+            values=[ALL_CATEGORIES_LABEL, *(category.value for category in Kategorie)],
             state="readonly",
         )
 
@@ -982,21 +966,33 @@ class LibraryApp:
     def run_search(self):
         """Liest die Filter, sucht Bücher und füllt die Ergebnistabelle."""
 
-        # Die Combobox zeigt deutsche Namen. Für die Datenbank übersetzen wir
-        # zurück. "Alle Kategorien" kommt im Dictionary nicht vor und ergibt
-        # durch ``get(..., "")`` einen leeren Filter.
-        category = CATEGORY_BY_LABEL.get(self.category_var.get(), "")
+        page = self._load_catalog()
+        if page is not None:
+            self.status_var.set(page.status)
 
-        # Datenbankzugriffe können fehlschlagen, z.B. wenn die Datei fehlt.
-        # Die GUI fängt den Fehler ab, damit nicht das gesamte Fenster abstürzt.
+    def sort_results(self, column):
+        """Ändert die typisierte Sortierung und lädt die Katalogseite neu."""
+
+        if self.sort_column == column:
+            self.sort_descending = not self.sort_descending
+        else:
+            self.sort_column = column
+            self.sort_descending = False
+        page = self._load_catalog()
+        if page is None:
+            return
+
+        self._update_sort_headings()
+        direction = "absteigend" if self.sort_descending else "aufsteigend"
+        self.status_var.set(
+            f"Sortiert nach {self.column_headings[column]} ({direction})"
+        )
+
+    def _load_catalog(self) -> Katalogseite | None:
+        """Lädt eine neue Seite über das Katalogansicht-Interface."""
+
         try:
-            rows = search_books(
-                # ``strip`` entfernt versehentliche Leerzeichen am Anfang/Ende.
-                self.title_var.get().strip(),
-                self.author_var.get().strip(),
-                category,
-                self.isbn_var.get().strip(),
-            )
+            page = self.katalog.suchen(self._current_catalog_search())
         except Exception as error:
             # Eine Messagebox ist für Benutzer verständlicher als ein
             # Python-Traceback in einem möglicherweise unsichtbaren Terminal.
@@ -1005,227 +1001,68 @@ class LibraryApp:
                 f"Die Bibliotheksdaten konnten nicht geladen werden.\n\n{error}",
             )
             self.status_var.set("Fehler beim Laden der Suchergebnisse")
-            return
+            return None
 
-        # Vor jeder neuen Suche entfernen wir alte Zeilen. ``get_children``
-        # liefert ihre IDs; der Stern entpackt diese IDs als Einzelargumente.
+        self._render_catalog(page)
+        return page
+
+    def _current_catalog_search(self) -> Katalogsuche:
+        """Baut aus Widgets eine typisierte, Tkinter-unabhängige Suche."""
+
+        category_label = self.category_var.get()
+        category = (
+            None
+            if category_label == ALL_CATEGORIES_LABEL
+            else Kategorie(category_label)
+        )
+        ordering = (
+            Sortierung(
+                feld=Sortierfeld(self.sort_column),
+                absteigend=self.sort_descending,
+            )
+            if self.sort_column
+            else None
+        )
+        return Katalogsuche(
+            titel=self.title_var.get(),
+            autor=self.author_var.get(),
+            kategorie=category,
+            isbn=self.isbn_var.get(),
+            sortierung=ordering,
+        )
+
+    def _render_catalog(self, page: Katalogseite) -> None:
+        """Zeichnet eine Katalogseite, ohne Werte später zurückzuparsen."""
+
+        # Die sichtbaren Zeilen und die typisierten Zeilen werden gemeinsam
+        # ersetzt. Die ISBN dient zugleich als stabile Treeview-Identität.
         self.results.delete(*self.results.get_children())
+        self.catalog_rows_by_isbn = {row.isbn: row for row in page.zeilen}
 
-        # Der Bibliotheksbestand liefert benannte Fachwerte. Die Oberfläche
-        # kennt dadurch weder SQL-Spalten noch deren technische Reihenfolge.
-        for book in rows:
+        for book in page.zeilen:
             self.results.insert(
-                # Leerer String als Eltern-ID bedeutet: normale oberste Zeile.
                 "",
-                # "end" hängt die neue Zeile unten an.
                 "end",
+                iid=book.isbn,
                 values=(
-                    # SQLite kann für fehlende Werte ``None`` liefern.
-                    # ``or ""`` zeigt stattdessen eine saubere leere Zelle.
-                    book.isbn or "",
-                    book.title or "",
-                    book.authors or "",
-                    # Die englische Kategorie wird nur für die Anzeige übersetzt.
-                    CATEGORIES.get(book.main_category, book.main_category)
-                    if book.main_category
-                    else "",
-                    book.language or "",
-                    # Die Datenbank speichert vollständige Daten im technisch
-                    # üblichen ISO-Format JJJJ-MM-TT. In der deutschen
-                    # Oberfläche zeigen wir sie als TT.MM.JJJJ an.
-                    self._format_date(book.release_date),
-                    # COUNT(*) liefert immer eine Zahl, auch wenn sie 0 ist.
-                    # Deshalb verwenden wir hier nicht ``or ""``: Eine Null
-                    # ist eine wichtige Information und soll sichtbar bleiben.
-                    book.copy_count,
+                    book.isbn,
+                    book.titel,
+                    book.autoren,
+                    book.kategorie,
+                    book.sprache,
+                    book.erscheinung,
+                    book.exemplarzahl,
                 ),
             )
 
-        count = len(rows)
+    def _update_sort_headings(self) -> None:
+        """Zeigt ausschließlich am aktiven Sortierfeld einen Richtungspfeil."""
 
-        # Falls vorher schon sortiert wurde, soll diese Sortierung auch auf die
-        # neuen Suchergebnisse angewendet werden.
-        if self.sort_column:
-            self._apply_sort()
-
-        # Kurze Rückmeldung, auch wenn keine Treffer vorhanden sind.
-        self.status_var.set(
-            f"{count} Treffer gefunden" if count else "Keine passenden Bücher gefunden"
-        )
-
-    def sort_results(self, column):
-        """Reagiert auf einen Klick auf eine Tabellenüberschrift.
-
-        Erster Klick auf eine Spalte: aufsteigend.
-        Zweiter Klick auf dieselbe Spalte: absteigend.
-        Klick auf eine andere Spalte: dort wieder aufsteigend beginnen.
-        """
-
-        if self.sort_column == column:
-            self.sort_descending = not self.sort_descending
-        else:
-            self.sort_column = column
-            self.sort_descending = False
-        self._apply_sort()
-
-    def _apply_sort(self):
-        """Sortiert vorhandene Treeview-Zeilen und aktualisiert den Pfeil."""
-
-        column = self.sort_column
-        if column is None:
-            return
-
-        # Treeview speichert jede Zeile unter einer internen ID wie "I001".
-        # Wir sortieren diese IDs und verschieben danach die zugehörigen Zeilen.
-        items = list(self.results.get_children())
-
-        # Leere Werte werden getrennt gesammelt. So bleiben sie sowohl bei
-        # aufsteigender als auch bei absteigender Sortierung immer unten.
-        populated = []
-        empty = []
-
-        for item in items:
-            # ``set(item, column)`` liest den sichtbaren Zelleninhalt.
-            value = self.results.set(item, column).strip()
-            target = populated if value else empty
-
-            # Gespeichert werden der vergleichbare Sortierwert und die Zeilen-ID.
-            target.append((self._sort_value(column, value), item))
-
-        # Python sortiert standardmäßig aufsteigend. ``reverse=True`` dreht die
-        # Reihenfolge für eine absteigende Sortierung um.
-        populated.sort(key=lambda entry: entry[0], reverse=self.sort_descending)
-
-        # Zuerst alle gefüllten, danach alle leeren Einträge.
-        ordered_items = [item for _value, item in populated + empty]
-        for position, item in enumerate(ordered_items):
-            # ``move`` verändert nur die Position der vorhandenen Tabellenzeile.
-            self.results.move(item, "", position)
-
-        # Nur die aktive Spalte erhält einen Richtungspfeil. Alle anderen
-        # Überschriften werden gleichzeitig auf ihren Grundtext zurückgesetzt.
         for column, heading in self.column_headings.items():
             indicator = ""
             if column == self.sort_column:
                 indicator = " ▼" if self.sort_descending else " ▲"
             self.results.heading(column, text=f"{heading}{indicator}")
-
-        # Auch textlich anzeigen, nach welcher Richtung sortiert wurde.
-        direction = "absteigend" if self.sort_descending else "aufsteigend"
-        self.status_var.set(
-            f"Sortiert nach {self.column_headings[column]} ({direction})"
-        )
-
-    @staticmethod
-    def _sort_value(column, value):
-        """Wandelt sichtbaren Text in einen sinnvoll sortierbaren Wert um."""
-
-        # Exemplarzahlen müssen numerisch sortiert werden. Als Text würde
-        # beispielsweise "10" fälschlich vor "2" einsortiert.
-        if column == "copies":
-            return int(value)
-
-        # Datumsangaben müssen als Datum statt alphabetisch verglichen werden.
-        # Sonst könnte z.B. "31.12.2020" falsch vor "01.01.2024" landen.
-        if column == "year":
-            # Die Datenbank kann mehrere übliche Datumsformate enthalten.
-            # Wir probieren sie nacheinander, bis eines passt.
-            for date_format in ("%Y-%m-%d", "%d.%m.%Y", "%Y"):
-                try:
-                    return datetime.strptime(value, date_format)
-                except ValueError:
-                    # ValueError bedeutet hier nur: Dieses Format war es nicht.
-                    continue
-
-        # ``casefold`` ist eine robuste Kleinschreibung für Vergleiche.
-        # Groß-/Kleinschreibung beeinflusst damit die Reihenfolge nicht.
-        return value.casefold()
-
-    @staticmethod
-    def _format_date(value):
-        """Formatiert ein Datenbankdatum für die deutsche Oberfläche.
-
-        Vollständige ISO-Daten wie ``2025-02-10`` werden zu ``10.02.2025``.
-        Reine Jahreszahlen bleiben unverändert, weil Monat und Tag unbekannt
-        sind und deshalb nicht künstlich ergänzt werden dürfen.
-        """
-
-        # Ein SQL-NULL kommt in Python als None an und soll leer erscheinen.
-        if not value:
-            return ""
-
-        # SQLite besitzt keinen verpflichtenden Datumstyp. Der Wert könnte
-        # deshalb theoretisch auch als Zahl ankommen; str macht ihn einheitlich.
-        value = str(value)
-
-        try:
-            # strptime liest den ISO-Text als echtes Datum ein. strftime gibt
-            # dasselbe Datum anschließend in deutscher Reihenfolge wieder aus.
-            return datetime.strptime(value, "%Y-%m-%d").strftime("%d.%m.%Y")
-        except ValueError:
-            # Jahreszahlen und unbekannte Altformate zeigen wir unverändert.
-            # Damit gehen keine Informationen durch eine falsche Annahme verloren.
-            return value
-
-    @staticmethod
-    def _translate_value(value, translations):
-        """Übersetzt technische Datenbankwerte für die Anzeige."""
-
-        if value is None:
-            return ""
-        text = str(value).strip()
-        if not text:
-            return ""
-        return translations.get(text.casefold(), text)
-
-    @classmethod
-    def _availability_label(cls, availability):
-        """Liefert den deutschen Anzeigetext für eine Verfügbarkeit."""
-
-        return cls._translate_value(availability, AVAILABILITY_LABELS)
-
-    @classmethod
-    def _state_label(cls, state):
-        """Liefert den deutschen Anzeigetext für einen Exemplarzustand."""
-
-        return cls._translate_value(state, STATE_LABELS)
-
-    @staticmethod
-    def _availability_tag(availability):
-        """Ordnet eine Verfügbarkeit dem passenden Farb‑Tag zu."""
-
-        normalized = str(availability or "").strip().casefold()
-        if normalized in {"available", "verfügbar", "verfuegbar", "frei"}:
-            return "availability_available"
-        if normalized in {
-            "borrowed",
-            "borrowed_out",
-            "lent",
-            "loaned",
-            "ausgeliehen",
-            "entliehen",
-        }:
-            return "availability_borrowed"
-        if normalized in {"reserved", "reserviert"}:
-            return "availability_reserved"
-        if normalized in {
-            "unavailable",
-            "nicht verfügbar",
-            "nicht verfuegbar",
-            "gesperrt",
-        }:
-            return "availability_unavailable"
-        if normalized in {
-            "maintenance",
-            "in bearbeitung",
-            "damaged",
-            "beschädigt",
-            "beschaedigt",
-            "lost",
-            "verloren",
-        }:
-            return "availability_problem"
-        return "availability_unknown"
 
     def open_clicked_book_detail(self, event):
         """Öffnet die Exemplarseite, wenn eine Buchzeile angeklickt wurde."""
@@ -1253,24 +1090,9 @@ class LibraryApp:
     def open_book_detail(self, item):
         """Lädt alle Exemplare eines Buches und zeigt sie in einem neuen Fenster."""
 
-        values = self.results.item(item, "values")
-        if not values:
-            return
-
-        isbn = values[0]
-        title = values[1] if len(values) > 1 and values[1] else isbn
-        author = values[2] if len(values) > 2 else ""
-        category = values[3] if len(values) > 3 else ""
-        language = values[4] if len(values) > 4 else ""
-        release_date = values[5] if len(values) > 5 else ""
-
-        if not isbn:
-            messagebox.showerror(
-                "Exemplare nicht gefunden",
-                "Dieser Eintrag hat keine ISBN und kann deshalb nicht eindeutig geöffnet werden.",
-                parent=self.root,
-            )
-            return
+        # Die Treeview-ID ist die ISBN. Sichtbare Zellen werden weder gelesen
+        # noch als Quelle für Buchidentität oder Metadaten verwendet.
+        isbn = item
 
         existing_window = self.copy_detail_windows.get(isbn)
         if existing_window and existing_window.winfo_exists():
@@ -1279,7 +1101,7 @@ class LibraryApp:
             return
 
         try:
-            copies = get_book_copies(isbn)
+            book = self.katalog.buch(isbn)
         except Exception as error:
             messagebox.showerror(
                 "Exemplare konnten nicht geladen werden",
@@ -1290,7 +1112,7 @@ class LibraryApp:
             return
 
         detail = tk.Toplevel(self.root)
-        detail.title(f"Exemplare: {title}")
+        detail.title(f"Exemplare: {book.titel}")
         detail.geometry("760x460")
         detail.minsize(620, 360)
         detail.configure(background=COLORS["background"])
@@ -1310,24 +1132,14 @@ class LibraryApp:
 
         ttk.Label(
             container,
-            text=title,
+            text=book.titel,
             style="Title.TLabel",
             wraplength=680,
         ).grid(row=0, column=0, sticky="w")
 
-        meta_parts = [f"ISBN: {isbn}"]
-        if author:
-            meta_parts.append(f"Autor: {author}")
-        if category:
-            meta_parts.append(f"Kategorie: {category}")
-        if language:
-            meta_parts.append(f"Sprache: {language}")
-        if release_date:
-            meta_parts.append(f"Erscheinung: {release_date}")
-
         ttk.Label(
             container,
-            text=" · ".join(meta_parts),
+            text=book.metadatenzeile,
             style="Subtitle.TLabel",
             wraplength=700,
         ).grid(row=1, column=0, sticky="w", pady=(4, 18))
@@ -1351,7 +1163,7 @@ class LibraryApp:
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             copies_card.inner_frame,
-            text=self._copies_summary(copies),
+            text=book.exemplarzusammenfassung,
             style="Field.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 12))
 
@@ -1373,19 +1185,19 @@ class LibraryApp:
         for tag, (background, foreground) in AVAILABILITY_ROW_STYLES.items():
             copy_table.tag_configure(tag, background=background, foreground=foreground)
 
-        if copies:
-            # Benannte Exemplarwerte halten die SQLite-Spaltenreihenfolge aus
-            # der Darstellung heraus.
-            for book_copy in copies:
+        if book.exemplare:
+            # Texte und semantische Verfügbarkeitsklasse kommen fertig aus der
+            # Katalogansicht; Tkinter ergänzt nur die konkrete Farbe.
+            for copy in book.exemplare:
                 copy_table.insert(
                     "",
                     "end",
                     values=(
-                        book_copy.copy_id or "",
-                        self._state_label(book_copy.state),
-                        self._availability_label(book_copy.availability),
+                        copy.exemplar_id,
+                        copy.zustand,
+                        copy.verfuegbarkeit,
                     ),
-                    tags=(self._availability_tag(book_copy.availability),),
+                    tags=(AVAILABILITY_TAG_BY_CLASS[copy.klasse],),
                 )
         else:
             copy_table.insert(
@@ -1402,22 +1214,7 @@ class LibraryApp:
         copy_table.grid(row=2, column=0, sticky="nsew")
         scrollbar.grid(row=2, column=1, sticky="ns")
 
-        self.status_var.set(f'Exemplare von "{title}" geöffnet')
-
-    def _copies_summary(self, copies):
-        """Erzeugt eine kurze Zusammenfassung der Verfügbarkeiten."""
-
-        if not copies:
-            return "Für dieses Buch sind keine Exemplare gespeichert."
-
-        availability_counts = Counter(
-            self._availability_label(book_copy.availability) or "Unbekannt"
-            for book_copy in copies
-        )
-        summary = ", ".join(
-            f"{count} {label}" for label, count in availability_counts.items()
-        )
-        return f"{len(copies)} Exemplare insgesamt · {summary}"
+        self.status_var.set(f'Exemplare von "{book.titel}" geöffnet')
 
     def open_results_context_menu(self, event):
         """Öffnet beim Rechtsklick ein Menü für die angeklickte Tabellenzeile."""
@@ -1443,21 +1240,12 @@ class LibraryApp:
         if not selection:
             return
 
-        item = selection[0]
-        values = self.results.item(item, "values")
-        if not values:
+        isbn = selection[0]
+        book = self.catalog_rows_by_isbn.get(isbn)
+        if book is None:
             return
 
-        isbn = values[0]
-        title = values[1] if len(values) > 1 and values[1] else isbn
-
-        if not isbn:
-            messagebox.showerror(
-                "Löschen nicht möglich",
-                "Dieser Eintrag hat keine ISBN und kann deshalb nicht eindeutig gelöscht werden.",
-                parent=self.root,
-            )
-            return
+        title = book.titel or isbn
 
         confirmed = messagebox.askyesno(
             "Eintrag wirklich löschen?",
@@ -1491,11 +1279,12 @@ class LibraryApp:
         # StringVars mit einem leeren Text leeren automatisch ihre Eingabefelder.
         self.title_var.set("")
         self.author_var.set("")
-        self.category_var.set("Alle Kategorien")
+        self.category_var.set(ALL_CATEGORIES_LABEL)
         self.isbn_var.set("")
 
-        # Alle aktuell dargestellten Ergebniszeilen löschen.
+        # Sichtbare und typisierte Ergebniszeilen werden gemeinsam verworfen.
         self.results.delete(*self.results.get_children())
+        self.catalog_rows_by_isbn.clear()
 
         # Sortierung vollständig zurücksetzen.
         self.sort_column = None

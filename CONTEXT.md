@@ -18,3 +18,11 @@ Seitenzahl.
 
 Ein **Exemplar** ist eine physische Ausgabe eines Buches. Es besitzt eine
 Exemplar-ID, einen Zustand und eine Verfügbarkeit.
+
+## Katalogansicht
+
+Die **Katalogansicht** ist die für Menschen aufbereitete Sicht auf den
+Bibliotheksbestand. Sie behält die Identität eines Buches unabhängig von
+sichtbaren Tabellenzellen und bestimmt Anzeigetexte, fachliche Sortierwerte
+sowie Zusammenfassungen für Exemplare. Tkinter zeichnet diese Werte, besitzt
+aber nicht ihre fachliche Bedeutung.
