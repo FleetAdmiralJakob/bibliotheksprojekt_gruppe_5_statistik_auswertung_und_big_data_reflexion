@@ -18,6 +18,7 @@ from queue import Empty, Queue
 from threading import Thread
 from tkinter import font as tkfont
 from tkinter import messagebox, ttk
+from typing import Literal, TypedDict
 
 # Wir importieren nur die Funktion, die die Oberfläche tatsächlich benötigt.
 # Die GUI gibt Suchbegriffe hinein und erhält eine Liste mit Büchern zurück.
@@ -30,6 +31,7 @@ from bibliothek import (
 )
 
 type RGB = tuple[int, int, int]
+type ActionButtonVariant = Literal["primary", "secondary"]
 
 
 # In der Datenbank stehen englische Kategorien, in der deutschen Oberfläche
@@ -151,15 +153,68 @@ COLORS = {
     "selection": _lighten(DESIGN_SYSTEM["primary"], 0.8),
 }
 
+ACTION_BUTTON_WIDTH = 144
+ACTION_BUTTON_HEIGHT = 39
+ACTION_BUTTON_RADIUS = 12
 
-class RoundedButton(tk.Canvas):
-    """Ein Button mit abgerundeten Ecken.
 
-    Dieser Button zeichnet eine gefüllte abgerundete Form auf einem Canvas und
-    setzt darüber einen Text. Er unterstützt Primär- und Sekundärfarben aus
-    dem Designsystem, reagiert auf Hover- und Klick-Ereignisse und kann
-    deaktiviert werden. Die Größe wird anhand des Textinhalts und einer
-    angegebenen Polsterung automatisch berechnet.
+class ButtonPalette(TypedDict):
+    background: str
+    foreground: str
+    hover: str
+    pressed: str
+    disabled_background: str
+    disabled_foreground: str
+    focus: str
+
+
+BUTTON_PALETTES: dict[ActionButtonVariant, ButtonPalette] = {
+    "primary": {
+        "background": DESIGN_SYSTEM["primary"],
+        "foreground": COLORS["surface"],
+        "hover": _darken(DESIGN_SYSTEM["primary"], 0.08),
+        "pressed": _darken(DESIGN_SYSTEM["primary"], 0.2),
+        "disabled_background": _lighten(DESIGN_SYSTEM["primary"], 0.4),
+        "disabled_foreground": _lighten(COLORS["surface"], 0.2),
+        "focus": _darken(DESIGN_SYSTEM["primary"], 0.32),
+    },
+    "secondary": {
+        "background": DESIGN_SYSTEM["secondary"],
+        "foreground": COLORS["text"],
+        "hover": _lighten(DESIGN_SYSTEM["secondary"], 0.1),
+        "pressed": _darken(DESIGN_SYSTEM["secondary"], 0.08),
+        "disabled_background": _lighten(DESIGN_SYSTEM["secondary"], 0.45),
+        "disabled_foreground": COLORS["muted"],
+        "focus": _darken(DESIGN_SYSTEM["secondary"], 0.32),
+    },
+}
+
+
+def _widget_background(widget: tk.Misc) -> str:
+    """Ermittelt die sichtbare Hintergrundfarbe eines Tk- oder ttk-Widgets."""
+
+    if isinstance(widget, ttk.Widget):
+        style_name = widget.cget("style") or widget.winfo_class()
+        background = ttk.Style(widget).lookup(style_name, "background")
+        if background:
+            return str(background)
+
+    if isinstance(widget, tk.Widget):
+        try:
+            return str(widget.cget("background"))
+        except tk.TclError:
+            pass
+
+    return COLORS["background"]
+
+
+class ActionButton(tk.Canvas):
+    """Ein einheitlicher, abgerundeter Aktionsbutton für die ttk-Oberfläche.
+
+    ttk besitzt unter Windows keine verlässliche, theme-unabhängige Option für
+    runde Button-Ecken. Deshalb zeichnet diese wiederverwendbare Komponente nur
+    die Button-Fläche auf einem Canvas; Layout, Typografie und Farbvarianten
+    bleiben zentral definiert und passen zu den übrigen ttk-Widgets.
     """
 
     def __init__(
@@ -168,128 +223,125 @@ class RoundedButton(tk.Canvas):
         *,
         text: str,
         command: Callable[[], None] | None = None,
-        radius: int = 12,
-        padding: tuple[int, int] = (16, 8),
-        bg: str | None = None,
-        fg: str | None = None,
-        active_bg: str | None = None,
-        disabled_bg: str | None = None,
-        disabled_fg: str | None = None,
-        font: tuple[str, int] | None = None,
-        **kwargs,
+        variant: ActionButtonVariant = "primary",
     ) -> None:
-        # Hintergrund des Canvas entspricht dem Hintergrund des Elternwidgets.
-        parent_bg = None
-        if isinstance(master, tk.Widget):
-            try:
-                parent_bg = master.cget("background")
-            except tk.TclError:
-                parent_bg = None
-        if parent_bg is None:
-            parent_bg = COLORS.get("background", "#ffffff")
-        super().__init__(master, highlightthickness=0, bd=0, bg=parent_bg, **kwargs)
+        super().__init__(
+            master,
+            width=ACTION_BUTTON_WIDTH,
+            height=ACTION_BUTTON_HEIGHT,
+            background=_widget_background(master),
+            borderwidth=0,
+            cursor="hand2",
+            highlightthickness=0,
+            takefocus=True,
+        )
         self.text = text
         self.command = command
-        self.radius = radius
-        self.padding = padding
-        self.bg = bg or COLORS["accent"]
-        self.fg = fg or COLORS["surface"]
-        self.active_bg = active_bg or _darken(self.bg, 0.2)
-        # Farben für deaktivierten Zustand
-        self.disabled_bg = disabled_bg or _lighten(self.bg, 0.4)
-        self.disabled_fg = disabled_fg or _lighten(self.fg, 0.4)
+        self.palette = BUTTON_PALETTES[variant]
         self.enabled = True
-        # Schriftart bestimmen – wir nutzen die Standard-TkFont, falls keine
-        # explizite Schrift angegeben wurde.
-        if font is None:
-            self.font = tkfont.nametofont("TkDefaultFont").copy()
-            self.font.configure(weight="bold")
-        else:
-            self.font = tkfont.Font(root=self, font=font)
+        self.focused = False
+        self.font = tkfont.Font(
+            root=self,
+            family="Segoe UI",
+            size=10,
+            weight="bold",
+        )
+        self._draw()
 
-        # Zeichne den Button initial
-        self._draw(self.bg, self.fg)
-        # Events für Hover und Klick
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_press)
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
+        self.bind("<Return>", self._on_key_press)
+        self.bind("<space>", self._on_key_press)
 
-    def _measure_text(self) -> tuple[int, int]:
-        """Gibt die Breite und Höhe des Textes in Pixeln zurück."""
-        # Temporärer Text, um die Bounding Box zu bestimmen
-        temp_id = self.create_text(0, 0, text=self.text, font=self.font, anchor="nw")
-        bbox = self.bbox(temp_id)
-        # Falls Font nicht messbar ist, setze Standardwerte
-        if not bbox:
-            width, height = 0, 0
-        else:
-            width = bbox[2] - bbox[0]
-            height = bbox[3] - bbox[1]
-        self.delete(temp_id)
-        return width, height
+    def _draw(self) -> None:
+        """Zeichnet Hintergrund und Beschriftung in der Standardgröße."""
 
-    def _draw(self, fill: str, text_color: str) -> None:
-        """Zeichnet die Button-Oberfläche neu."""
-        # Lösche vorhandene Elemente
-        self.delete("all")
-        # Textmaße bestimmen
-        text_width, text_height = self._measure_text()
-        width = text_width + 2 * self.padding[0]
-        height = text_height + 2 * self.padding[1]
-        # Radius anpassen, damit er nicht größer als das halbe Widget ist
-        r = min(self.radius, width // 2, height // 2)
-        # Punkte für die abgerundete Form berechnen; wir ziehen 1 Pixel ab,
-        # damit der Rand vollständig sichtbar bleibt.
-        points = _rounded_polygon_points(width - 1, height - 1, r)
+        points = _rounded_polygon_points(
+            ACTION_BUTTON_WIDTH - 1,
+            ACTION_BUTTON_HEIGHT - 1,
+            ACTION_BUTTON_RADIUS,
+        )
         self._rect_id = self.create_polygon(
             points,
-            fill=fill,
-            outline=fill,
+            fill=self.palette["background"],
+            outline=self.palette["background"],
             width=1,
             smooth=True,
+            splinesteps=36,
         )
-        # Zentrierten Text zeichnen
         self._text_id = self.create_text(
-            width / 2,
-            height / 2,
+            ACTION_BUTTON_WIDTH / 2,
+            ACTION_BUTTON_HEIGHT / 2,
             text=self.text,
-            fill=text_color,
+            fill=self.palette["foreground"],
             font=self.font,
             anchor="center",
         )
-        # Canvas-Größe anpassen
-        self.config(width=width, height=height)
 
     def _on_enter(self, _event: tk.Event) -> None:
         if self.enabled:
-            self.itemconfig(self._rect_id, fill=self.active_bg, outline=self.active_bg)
+            self._render(self.palette["hover"])
 
     def _on_leave(self, _event: tk.Event) -> None:
         if self.enabled:
-            self.itemconfig(self._rect_id, fill=self.bg, outline=self.bg)
+            self._render(self.palette["background"])
 
     def _on_press(self, _event: tk.Event) -> None:
         if self.enabled and self.command:
-            # Visual feedback für Klick
-            self.itemconfig(self._rect_id, fill=self.active_bg, outline=self.active_bg)
-            # Nach kurzer Verzögerung zur ursprünglichen Farbe zurückkehren
-            self.after(
-                100,
-                lambda: self.itemconfig(
-                    self._rect_id,
-                    fill=self.bg,
-                    outline=self.bg,
-                ),
-            )
+            self.focus_set()
+            self._invoke()
+
+    def _on_key_press(self, _event: tk.Event) -> str:
+        if self.enabled and self.command:
+            self._invoke()
+        return "break"
+
+    def _on_focus_in(self, _event: tk.Event) -> None:
+        self.focused = True
+        self._render(self.palette["background"])
+
+    def _on_focus_out(self, _event: tk.Event) -> None:
+        self.focused = False
+        self._render(self.palette["background"])
+
+    def _invoke(self) -> None:
+        self._render(self.palette["pressed"])
+        self.after(100, self._restore_background)
+        if self.command:
             self.command()
+
+    def _restore_background(self) -> None:
+        if self.winfo_exists() and self.enabled:
+            self._render(self.palette["background"])
+
+    def _render(self, background: str) -> None:
+        outline = self.palette["focus"] if self.focused else background
+        self.itemconfig(
+            self._rect_id,
+            fill=background,
+            outline=outline,
+            width=2 if self.focused else 1,
+        )
 
     def set_enabled(self, enabled: bool) -> None:
         """Aktiviert oder deaktiviert den Button."""
 
         self.enabled = enabled
-        background = self.bg if enabled else self.disabled_bg
-        foreground = self.fg if enabled else self.disabled_fg
-        self.itemconfig(self._rect_id, fill=background, outline=background)
+        background = (
+            self.palette["background"]
+            if enabled
+            else self.palette["disabled_background"]
+        )
+        foreground = (
+            self.palette["foreground"]
+            if enabled
+            else self.palette["disabled_foreground"]
+        )
+        self.configure(cursor="hand2" if enabled else "arrow")
+        self._render(background)
         self.itemconfig(self._text_id, fill=foreground)
 
     def set_command(self, command: Callable[[], None]) -> None:
@@ -635,44 +687,6 @@ class LibraryApp:
             arrowcolor=COLORS["muted"],
         )
 
-        # Der primäre Button ist die wichtigste Aktion und deshalb blau.
-        style.configure(
-            "Primary.TButton",
-            padding=(20, 10),
-            background=COLORS["accent"],
-            foreground="#FFFFFF",
-            borderwidth=0,
-            font=("Segoe UI Semibold", 10),
-        )
-
-        # ``map`` definiert zustandsabhängige Farben. Beim Darüberfahren
-        # ("active") oder Klicken ("pressed") wird der Button dunkler.
-        style.map(
-            "Primary.TButton",
-            background=[
-                ("pressed", COLORS["accent_active"]),
-                ("active", COLORS["accent_active"]),
-            ],
-        )
-
-        # Der Zurücksetzen-Button ist bewusst zurückhaltender gestaltet,
-        # weil er gegenüber der Suche eine sekundäre Aktion ist. Hier verwenden
-        # wir die im Design‑System definierte Sekundärfarbe. Eine leichte
-        # Aufhellung beim Darüberfahren vermittelt Feedback und erzeugt ein
-        # hochwertiges Gefühl.
-        secondary_bg = DESIGN_SYSTEM["secondary"]
-        style.configure(
-            "Secondary.TButton",
-            padding=(16, 10),
-            background=secondary_bg,
-            foreground=COLORS["text"],
-            bordercolor=_lighten(COLORS["border"], 0.1),
-        )
-        style.map(
-            "Secondary.TButton",
-            background=[("active", _lighten(secondary_bg, 0.1))],
-        )
-
         # Treeview ist das ttk-Widget für tabellarische Daten.
         style.configure(
             "Treeview",
@@ -737,11 +751,11 @@ class LibraryApp:
             text="Durchsuche den Bestand nach Titel, Autor, Kategorie oder ISBN.",
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Button(
+        ActionButton(
             header,
             text="Buch hinzufügen",
-            style="Primary.TButton",
             command=self.open_add_book_dialog,
+            variant="primary",
         ).grid(row=0, column=1, rowspan=2, sticky="ne")
 
         # Die Suchfelder liegen zusammen in einer weißen "Karte". Wir nutzen
@@ -800,31 +814,23 @@ class LibraryApp:
         # Ein eigener Frame hält beide Buttons als zusammengehörige Gruppe.
         # ``sticky="e"`` richtet diese Gruppe am rechten Rand aus. Wir
         # platzieren ihn ebenfalls im inneren Bereich des abgerundeten
-        # Rahmens. Statt Standard-Buttons verwenden wir eigens definierte
-        # ``RoundedButton``-Widgets, die weiche Kanten besitzen und sich
-        # optisch in das restliche Design einfügen.
+        # Rahmens. Alle Aktionen verwenden dieselbe wiederverwendbare
+        # ``ActionButton``-Komponente und unterscheiden sich nur in ihrer
+        # primären oder sekundären Farbvariante.
         actions = ttk.Frame(search_card.inner_frame, style="Card.TFrame")
         actions.grid(row=3, column=0, columnspan=4, sticky="e", pady=(18, 0))
-        reset_btn = RoundedButton(
+        reset_btn = ActionButton(
             actions,
             text="Zurücksetzen",
             command=self.reset_search,
-            bg=DESIGN_SYSTEM["secondary"],
-            fg=COLORS["text"],
-            active_bg=_lighten(DESIGN_SYSTEM["secondary"], 0.1),
-            radius=12,
-            padding=(16, 8),
+            variant="secondary",
         )
         reset_btn.pack(side="left", padx=(0, 10))
-        search_btn = RoundedButton(
+        search_btn = ActionButton(
             actions,
             text="Bestand durchsuchen",
             command=self.run_search,
-            bg=DESIGN_SYSTEM["primary"],
-            fg=COLORS["surface"],
-            active_bg=_darken(DESIGN_SYSTEM["primary"], 0.2),
-            radius=12,
-            padding=(16, 8),
+            variant="primary",
         )
         search_btn.pack(side="left")
 
@@ -1563,25 +1569,17 @@ class LibraryApp:
         actions = ttk.Frame(card.inner_frame, style="Card.TFrame")
         actions.grid(row=6, column=0, sticky="e", pady=(22, 0))
         # Abgerundete Buttons im Dialog: Abbrechen (sekundär) und Hinzufügen (primär)
-        cancel_btn = RoundedButton(
+        cancel_btn = ActionButton(
             actions,
             text="Abbrechen",
             command=dialog.destroy,
-            bg=DESIGN_SYSTEM["secondary"],
-            fg=COLORS["text"],
-            active_bg=_lighten(DESIGN_SYSTEM["secondary"], 0.1),
-            radius=12,
-            padding=(16, 8),
+            variant="secondary",
         )
         cancel_btn.pack(side="left", padx=(0, 10))
-        add_btn = RoundedButton(
+        add_btn = ActionButton(
             actions,
             text="Buch hinzufügen",
-            bg=DESIGN_SYSTEM["primary"],
-            fg=COLORS["surface"],
-            active_bg=_darken(DESIGN_SYSTEM["primary"], 0.2),
-            radius=12,
-            padding=(16, 8),
+            variant="primary",
         )
         add_btn.pack(side="left")
         submitting = False
