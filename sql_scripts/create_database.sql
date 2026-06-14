@@ -1,10 +1,10 @@
 DROP TABLE IF EXISTS borrowings;
+DROP TABLE IF EXISTS book_authors;
 DROP TABLE IF EXISTS book_copies;
 DROP TABLE IF EXISTS books;
 DROP TABLE IF EXISTS publishers;
 DROP TABLE IF EXISTS authors;
 DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS book_authors;
 
 -- TODO: Create indexes for the stuff we query for
 

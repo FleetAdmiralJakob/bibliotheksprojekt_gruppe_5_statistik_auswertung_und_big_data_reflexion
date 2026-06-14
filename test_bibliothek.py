@@ -1,48 +1,58 @@
-import sqlite3
+"""Tests an den Interfaces der Fach- und Bestandsmodule."""
+
 import tempfile
 import unittest
-from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-import database
-from bibliothek import add_book, normalize_isbn
+import bibliothek
+from database import Bibliotheksbestand
+from models import BookMetadata
 
 
 class IsbnTests(unittest.TestCase):
+    """Prüft die reine ISBN-Fachlogik ohne Datenbankzugriff."""
+
     def test_normalizes_valid_isbn(self):
-        self.assertEqual(normalize_isbn("978-3-596-18094-3"), "9783596180943")
-        self.assertEqual(normalize_isbn("0-306-40615-2"), "0306406152")
+        """Trennzeichen werden entfernt, gültige Prüfziffern bleiben erhalten."""
+
+        self.assertEqual(
+            bibliothek.normalize_isbn("978-3-596-18094-3"),
+            "9783596180943",
+        )
+        self.assertEqual(bibliothek.normalize_isbn("0-306-40615-2"), "0306406152")
 
     def test_rejects_invalid_isbn(self):
+        """Eine falsche Prüfziffer wird als ungültige ISBN gemeldet."""
+
         with self.assertRaises(ValueError):
-            normalize_isbn("9783596180944")
+            bibliothek.normalize_isbn("9783596180944")
 
 
-class AddBookTests(unittest.TestCase):
+class BibliotheksbestandTests(unittest.TestCase):
+    """Prüft SQLite ausschließlich über das Bibliotheksbestand-Interface."""
+
     def setUp(self):
+        """Erzeugt für jeden Test einen vollständig isolierten Bestand."""
+
+        # Eine echte temporäre SQLite-Datei ist der lokale Testadapter. Dadurch
+        # prüfen die Tests SQL, Fremdschlüssel und Transaktionen gemeinsam.
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
             self.database_path = Path(temp_file.name)
 
-        schema_path = Path(__file__).parent / "sql_scripts" / "create_database.sql"
-        with (
-            closing(sqlite3.connect(self.database_path)) as connection,
-            connection,
-        ):
-            connection.executescript(schema_path.read_text(encoding="utf-8"))
-
-        self.database_patch = patch.object(
-            database, "DATABASE_PATH", self.database_path
-        )
-        self.database_patch.start()
+        self.bestand = Bibliotheksbestand(database_path=self.database_path)
+        self.bestand.recreate()
 
     def tearDown(self):
-        self.database_patch.stop()
+        """Entfernt die nur für den aktuellen Test angelegte Datenbankdatei."""
+
         self.database_path.unlink(missing_ok=True)
 
-    @patch("bibliothek.fetch_book_metadata")
-    def test_adds_metadata_relations_and_requested_copies(self, fetch_metadata):
-        fetch_metadata.return_value = {
+    @staticmethod
+    def metadata() -> BookMetadata:
+        """Liefert vollständige, gültige Metadaten für Bestandsoperationen."""
+
+        return {
             "isbn": "9780306406157",
             "title": "Test Book",
             "authors": ["Ada Example", "Max Example"],
@@ -53,31 +63,110 @@ class AddBookTests(unittest.TestCase):
             "main_category": "Science",
         }
 
-        add_book("978-0-306-40615-7", 3)
+    def test_adds_and_reads_book_through_the_interface(self):
+        """Buch, Beziehungen und Exemplare sind über Fachwerte beobachtbar."""
 
-        with closing(sqlite3.connect(self.database_path)) as connection:
-            book = connection.execute(
-                """
-                SELECT title, main_category, language, release_date, page_count
-                FROM books WHERE isbn = ?
-                """,
-                ("9780306406157",),
-            ).fetchone()
-            author_count = connection.execute(
-                "SELECT COUNT(*) FROM book_authors WHERE isbn = ?",
-                ("9780306406157",),
-            ).fetchone()[0]
-            copies = connection.execute(
-                """
-                SELECT state, availability
-                FROM book_copies WHERE isbn = ? ORDER BY copy_id
-                """,
-                ("9780306406157",),
-            ).fetchall()
+        self.bestand.add_book(self.metadata(), 3)
 
-        self.assertEqual(book, ("Test Book", "Science", "Englisch", "2026", 240))
-        self.assertEqual(author_count, 2)
-        self.assertEqual(copies, [("new", "available")] * 3)
+        # Die Suche prüft Buch, Autoren, Kategorie und Exemplaranzahl, ohne
+        # Tabellen oder SELECT-Spalten im Test zu kennen.
+        results = self.bestand.search_books(
+            book_query="Test",
+            author_query="",
+            category_query="Science",
+            isbn_query="978030",
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].isbn, "9780306406157")
+        self.assertEqual(results[0].title, "Test Book")
+        self.assertEqual(results[0].authors, "Ada Example, Max Example")
+        self.assertEqual(results[0].copy_count, 3)
+
+        # Die Exemplarabfrage bestätigt die Persistenzinvarianten für Zustand,
+        # Verfügbarkeit und reproduzierbare Exemplar-IDs.
+        copies = self.bestand.get_book_copies("9780306406157")
+        self.assertEqual(
+            [copy.copy_id for copy in copies],
+            [
+                "9780306406157-001",
+                "9780306406157-002",
+                "9780306406157-003",
+            ],
+        )
+        self.assertEqual(
+            [(copy.state, copy.availability) for copy in copies],
+            [("new", "available")] * 3,
+        )
+
+    def test_recreate_resets_a_populated_database(self):
+        """Das Schema kann trotz vorhandener Fremdschlüssel neu erstellt werden."""
+
+        self.bestand.add_book(self.metadata(), 1)
+
+        # Dieser Aufruf reproduzierte vor der Korrektur der DROP-Reihenfolge
+        # einen Fremdschlüsselfehler auf einer gefüllten Datenbank.
+        self.bestand.recreate()
+
+        self.assertEqual(self.bestand.search_books("", "", "", ""), [])
+
+    def test_rejects_invalid_copy_count_at_the_interface(self):
+        """Der Bestand schützt seine Exemplaranzahl unabhängig von der GUI."""
+
+        with self.assertRaises(ValueError):
+            self.bestand.add_book(self.metadata(), 0)
+
+        self.assertEqual(self.bestand.search_books("", "", "", ""), [])
+
+    def test_delete_removes_book_and_copies_atomically(self):
+        """Nach dem Löschen ist das Buch über kein Bestandsinterface erreichbar."""
+
+        self.bestand.add_book(self.metadata(), 2)
+        self.bestand.delete_book("9780306406157")
+
+        self.assertEqual(self.bestand.search_books("", "", "", ""), [])
+        with self.assertRaises(ValueError):
+            self.bestand.get_book_copies("9780306406157")
+
+
+class AddBookTests(unittest.TestCase):
+    """Prüft Buchaufnahme mit externer Metadatenquelle und tiefem Bestand."""
+
+    def setUp(self):
+        """Verdrahtet die Fachlogik mit einem temporären Bibliotheksbestand."""
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
+            self.database_path = Path(temp_file.name)
+
+        self.bestand = Bibliotheksbestand(database_path=self.database_path)
+        self.bestand.recreate()
+
+        # Nur das Standardobjekt am Modulrand wird ersetzt. SQL, Cursor und
+        # Datenbankpfade bleiben hinter dem Interface des Bestands verborgen.
+        self.bestand_patch = patch.object(bibliothek, "_BESTAND", self.bestand)
+        self.bestand_patch.start()
+
+    def tearDown(self):
+        """Stellt die Standardverdrahtung wieder her und entfernt Testdaten."""
+
+        self.bestand_patch.stop()
+        self.database_path.unlink(missing_ok=True)
+
+    @patch("bibliothek.fetch_book_metadata")
+    def test_adds_metadata_and_requested_copies(self, fetch_metadata):
+        """Buchaufnahme reicht geprüfte Metadaten atomar an den Bestand weiter."""
+
+        fetch_metadata.return_value = BibliotheksbestandTests.metadata()
+
+        metadata = bibliothek.add_book("978-0-306-40615-7", 3)
+
+        # Beobachtungen laufen über dasselbe Bestandsinterface wie in der
+        # Anwendung. Der Test greift nicht hinter den Seam auf Tabellen zu.
+        results = self.bestand.search_books("", "", "", metadata["isbn"])
+        copies = self.bestand.get_book_copies(metadata["isbn"])
+
+        self.assertEqual(results[0].title, "Test Book")
+        self.assertEqual(results[0].authors, "Ada Example, Max Example")
+        self.assertEqual(len(copies), 3)
 
 
 if __name__ == "__main__":

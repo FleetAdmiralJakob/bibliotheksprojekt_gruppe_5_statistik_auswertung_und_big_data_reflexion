@@ -1011,16 +1011,9 @@ class LibraryApp:
         # liefert ihre IDs; der Stern entpackt diese IDs als Einzelargumente.
         self.results.delete(*self.results.get_children())
 
-        # Jede Datenbankzeile ist ein Tupel mit genau den sieben SELECT-Spalten.
-        for (
-            isbn,
-            title,
-            author,
-            category_name,
-            language,
-            release_date,
-            copy_count,
-        ) in rows:
+        # Der Bibliotheksbestand liefert benannte Fachwerte. Die Oberfläche
+        # kennt dadurch weder SQL-Spalten noch deren technische Reihenfolge.
+        for book in rows:
             self.results.insert(
                 # Leerer String als Eltern-ID bedeutet: normale oberste Zeile.
                 "",
@@ -1029,22 +1022,22 @@ class LibraryApp:
                 values=(
                     # SQLite kann für fehlende Werte ``None`` liefern.
                     # ``or ""`` zeigt stattdessen eine saubere leere Zelle.
-                    isbn or "",
-                    title or "",
-                    author or "",
+                    book.isbn or "",
+                    book.title or "",
+                    book.authors or "",
                     # Die englische Kategorie wird nur für die Anzeige übersetzt.
-                    CATEGORIES.get(category_name, category_name)
-                    if category_name
+                    CATEGORIES.get(book.main_category, book.main_category)
+                    if book.main_category
                     else "",
-                    language or "",
+                    book.language or "",
                     # Die Datenbank speichert vollständige Daten im technisch
                     # üblichen ISO-Format JJJJ-MM-TT. In der deutschen
                     # Oberfläche zeigen wir sie als TT.MM.JJJJ an.
-                    self._format_date(release_date),
+                    self._format_date(book.release_date),
                     # COUNT(*) liefert immer eine Zahl, auch wenn sie 0 ist.
                     # Deshalb verwenden wir hier nicht ``or ""``: Eine Null
                     # ist eine wichtige Information und soll sichtbar bleiben.
-                    copy_count,
+                    book.copy_count,
                 ),
             )
 
@@ -1381,16 +1374,18 @@ class LibraryApp:
             copy_table.tag_configure(tag, background=background, foreground=foreground)
 
         if copies:
-            for copy_id, state, availability in copies:
+            # Benannte Exemplarwerte halten die SQLite-Spaltenreihenfolge aus
+            # der Darstellung heraus.
+            for book_copy in copies:
                 copy_table.insert(
                     "",
                     "end",
                     values=(
-                        copy_id or "",
-                        self._state_label(state),
-                        self._availability_label(availability),
+                        book_copy.copy_id or "",
+                        self._state_label(book_copy.state),
+                        self._availability_label(book_copy.availability),
                     ),
-                    tags=(self._availability_tag(availability),),
+                    tags=(self._availability_tag(book_copy.availability),),
                 )
         else:
             copy_table.insert(
@@ -1416,8 +1411,8 @@ class LibraryApp:
             return "Für dieses Buch sind keine Exemplare gespeichert."
 
         availability_counts = Counter(
-            self._availability_label(availability) or "Unbekannt"
-            for _copy_id, _state, availability in copies
+            self._availability_label(book_copy.availability) or "Unbekannt"
+            for book_copy in copies
         )
         summary = ", ".join(
             f"{count} {label}" for label, count in availability_counts.items()
