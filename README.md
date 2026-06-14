@@ -1,0 +1,1 @@
+Wir, als Gruppe, haben uns dazu entschieden keine Abbildung des Buches einzubauen, da dies nicht gut aussieht und wir ja ein Admin Dashboard bauen sollen und kein Interface für die Leute, welche in der Bibliothek Bücher ausleihen wollen.
