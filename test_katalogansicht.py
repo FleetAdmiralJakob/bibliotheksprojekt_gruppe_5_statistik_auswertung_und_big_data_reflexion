@@ -7,14 +7,17 @@ from contextlib import closing
 from pathlib import Path
 
 from database import Bibliotheksbestand
+from domain_values import (
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
+    Kategorie,
+)
 from katalogansicht import (
     BuchNichtGefunden,
     Katalogansicht,
     Katalogsuche,
-    Kategorie,
     Sortierfeld,
     Sortierung,
-    Verfuegbarkeitsklasse,
 )
 from models import BookMetadata
 
@@ -42,7 +45,7 @@ class KatalogansichtTests(unittest.TestCase):
         isbn: str,
         title: str,
         *,
-        category: str = "Science",
+        category: Kategorie = Kategorie.WISSENSCHAFT,
         release_date: str = "2026",
     ) -> BookMetadata:
         """Erstellt vollständige Metadaten mit gezielt variierbaren Werten."""
@@ -65,7 +68,7 @@ class KatalogansichtTests(unittest.TestCase):
             self.metadata(
                 "9780306406157",
                 "Ansichtstest",
-                category="Fiction",
+                category=Kategorie.BELLETRISTIK,
                 release_date="2025-02-10",
             ),
             2,
@@ -75,7 +78,7 @@ class KatalogansichtTests(unittest.TestCase):
 
         self.assertEqual(page.status, "1 Treffer gefunden")
         self.assertEqual(page.zeilen[0].isbn, "9780306406157")
-        self.assertEqual(page.zeilen[0].kategorie, "Belletristik")
+        self.assertEqual(page.zeilen[0].kategorie, Kategorie.BELLETRISTIK.label)
         self.assertEqual(page.zeilen[0].erscheinung, "10.02.2025")
         self.assertEqual(page.zeilen[0].exemplarzahl, 2)
 
@@ -89,7 +92,7 @@ class KatalogansichtTests(unittest.TestCase):
 
         self.assertEqual(
             book.exemplarzusammenfassung,
-            "1 Exemplar insgesamt · 1 Verfügbar",
+            (f"1 Exemplar insgesamt · 1 {Exemplarverfuegbarkeit.VERFUEGBAR.label}"),
         )
 
     def test_sorts_dates_chronologically_without_parsing_visible_text(self):
@@ -157,13 +160,7 @@ class KatalogansichtTests(unittest.TestCase):
         # Das aktuelle Bestandsinterface kann Statuswerte noch nicht ändern.
         # Die Fixture setzt deshalb ausschließlich erlaubte Schemawerte; die
         # Beobachtung erfolgt danach nur über das Katalogansicht-Interface.
-        fixtures = [
-            ("bad", "available"),
-            ("okay", "borrowed"),
-            ("good", "reserved"),
-            ("very good", "broken"),
-            ("new", "lost"),
-        ]
+        fixtures = list(zip(Exemplarzustand, Exemplarverfuegbarkeit, strict=True))
         with closing(sqlite3.connect(self.database_path)) as connection, connection:
             for number, (state, availability) in enumerate(fixtures, start=1):
                 connection.execute(
@@ -179,27 +176,26 @@ class KatalogansichtTests(unittest.TestCase):
 
         self.assertEqual(
             [copy.zustand for copy in book.exemplare],
-            ["Schlecht", "In Ordnung", "Gut", "Sehr gut", "Neu"],
+            [state.label for state in Exemplarzustand],
         )
         self.assertEqual(
             [copy.verfuegbarkeit for copy in book.exemplare],
-            ["Verfügbar", "Ausgeliehen", "Reserviert", "Defekt", "Verloren"],
+            [availability.label for availability in Exemplarverfuegbarkeit],
         )
         self.assertEqual(
             [copy.klasse for copy in book.exemplare],
             [
-                Verfuegbarkeitsklasse.VERFUEGBAR,
-                Verfuegbarkeitsklasse.AUSGELIEHEN,
-                Verfuegbarkeitsklasse.RESERVIERT,
-                Verfuegbarkeitsklasse.PROBLEM,
-                Verfuegbarkeitsklasse.PROBLEM,
+                availability.presentation_class
+                for availability in Exemplarverfuegbarkeit
             ],
         )
         self.assertEqual(
             book.exemplarzusammenfassung,
             (
-                "5 Exemplare insgesamt · 1 Verfügbar, 1 Ausgeliehen, "
-                "1 Reserviert, 1 Defekt, 1 Verloren"
+                "5 Exemplare insgesamt · "
+                + ", ".join(
+                    f"1 {availability.label}" for availability in Exemplarverfuegbarkeit
+                )
             ),
         )
 

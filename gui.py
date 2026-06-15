@@ -24,15 +24,14 @@ from typing import Literal, TypedDict
 # Katalogansicht erhält dagegen direkt den Bibliotheksbestand.
 from bibliothek import add_book, delete_book
 from database import Bibliotheksbestand
+from domain_values import Kategorie, Verfuegbarkeitsklasse
 from katalogansicht import (
     Katalogansicht,
     Katalogseite,
     Katalogsuche,
     Katalogzeile,
-    Kategorie,
     Sortierfeld,
     Sortierung,
-    Verfuegbarkeitsklasse,
 )
 from models import BookMetadata
 
@@ -569,22 +568,11 @@ class RoundedFrame(tk.Frame):
 # Jedes Tag bekommt in der Exemplartabelle eine eigene Farbe. Die Tag-Namen
 # bleiben technisch/englisch, weil sie nicht sichtbar sind.
 AVAILABILITY_ROW_STYLES = {
-    "availability_available": ("#DCFCE7", "#14532D"),
-    "availability_borrowed": ("#FEE2E2", "#991B1B"),
-    "availability_reserved": ("#FEF3C7", "#92400E"),
-    "availability_unavailable": ("#E5E7EB", "#374151"),
-    "availability_problem": ("#FFEDD5", "#9A3412"),
-    "availability_unknown": (COLORS["surface"], COLORS["text"]),
-}
-
-# Die Katalogansicht klassifiziert Verfügbarkeiten fachlich. Tkinter übersetzt
-# diese Klassen ausschließlich in die sichtbaren Farb-Tags seiner Tabelle.
-AVAILABILITY_TAG_BY_CLASS = {
-    Verfuegbarkeitsklasse.VERFUEGBAR: "availability_available",
-    Verfuegbarkeitsklasse.AUSGELIEHEN: "availability_borrowed",
-    Verfuegbarkeitsklasse.RESERVIERT: "availability_reserved",
-    Verfuegbarkeitsklasse.PROBLEM: "availability_problem",
-    Verfuegbarkeitsklasse.UNBEKANNT: "availability_unknown",
+    Verfuegbarkeitsklasse.VERFUEGBAR: ("#DCFCE7", "#14532D"),
+    Verfuegbarkeitsklasse.AUSGELIEHEN: ("#FEE2E2", "#991B1B"),
+    Verfuegbarkeitsklasse.RESERVIERT: ("#FEF3C7", "#92400E"),
+    Verfuegbarkeitsklasse.PROBLEM: ("#FFEDD5", "#9A3412"),
+    Verfuegbarkeitsklasse.UNBEKANNT: (COLORS["surface"], COLORS["text"]),
 }
 
 
@@ -884,7 +872,7 @@ class LibraryApp:
         category = ttk.Combobox(
             search_card.inner_frame,
             textvariable=self.category_var,
-            values=[ALL_CATEGORIES_LABEL, *(category.value for category in Kategorie)],
+            values=[ALL_CATEGORIES_LABEL, *(category.label for category in Kategorie)],
             state="readonly",
         )
 
@@ -1114,7 +1102,7 @@ class LibraryApp:
         category = (
             None
             if category_label == ALL_CATEGORIES_LABEL
-            else Kategorie(category_label)
+            else Kategorie.from_label(category_label)
         )
         ordering = (
             Sortierung(
@@ -1284,8 +1272,15 @@ class LibraryApp:
         copy_table.column("state", width=160, minwidth=100, anchor="w")
         copy_table.column("availability", width=180, minwidth=120, anchor="w")
 
-        for tag, (background, foreground) in AVAILABILITY_ROW_STYLES.items():
-            copy_table.tag_configure(tag, background=background, foreground=foreground)
+        for availability_class, (
+            background,
+            foreground,
+        ) in AVAILABILITY_ROW_STYLES.items():
+            copy_table.tag_configure(
+                availability_class.value,
+                background=background,
+                foreground=foreground,
+            )
 
         if book.exemplare:
             # Texte und semantische Verfügbarkeitsklasse kommen fertig aus der
@@ -1299,14 +1294,14 @@ class LibraryApp:
                         copy.zustand,
                         copy.verfuegbarkeit,
                     ),
-                    tags=(AVAILABILITY_TAG_BY_CLASS[copy.klasse],),
+                    tags=(copy.klasse.value,),
                 )
         else:
             copy_table.insert(
                 "",
                 "end",
                 values=("", "Keine Exemplare gespeichert", ""),
-                tags=("availability_unknown",),
+                tags=(Verfuegbarkeitsklasse.UNBEKANNT.value,),
             )
 
         scrollbar = ttk.Scrollbar(

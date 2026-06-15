@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from domain_values import (
+    DEFAULT_COPY_AVAILABILITY,
+    DEFAULT_COPY_STATE,
+    render_schema_value_lists,
+)
 from models import BookCopy, BookMetadata, BookSearchResult
 
 type QueryParameters = tuple[object, ...]
@@ -49,9 +54,10 @@ class Bibliotheksbestand:
         Neuerstellung oder in isolierten Tests.
         """
 
-        # Das Schema bleibt als SQL-Datei lesbar und kann unabhängig vom
-        # Python-Code geprüft werden.
-        sql_script = self.schema_path.read_text(encoding="utf-8")
+        # Die Tabellenstruktur bleibt als SQL-Datei lesbar. Erlaubte Fachwerte
+        # werden vor der Ausführung aus den zentralen Definitionen eingesetzt.
+        sql_template = self.schema_path.read_text(encoding="utf-8")
+        sql_script = render_schema_value_lists(sql_template)
 
         def recreate_schema(cursor: sqlite3.Cursor) -> None:
             # ``executescript`` bestätigt sonst eine vorherige Transaktion
@@ -230,9 +236,17 @@ class Bibliotheksbestand:
             cursor.executemany(
                 """
                 INSERT INTO book_copies (copy_id, isbn, state, availability)
-                VALUES (?, ?, 'new', 'available')
+                VALUES (?, ?, ?, ?)
                 """,
-                [(f"{isbn}-{number:03}", isbn) for number in range(1, copy_count + 1)],
+                [
+                    (
+                        f"{isbn}-{number:03}",
+                        isbn,
+                        DEFAULT_COPY_STATE,
+                        DEFAULT_COPY_AVAILABILITY,
+                    )
+                    for number in range(1, copy_count + 1)
+                ],
             )
 
         self._run_transaction(insert_book)

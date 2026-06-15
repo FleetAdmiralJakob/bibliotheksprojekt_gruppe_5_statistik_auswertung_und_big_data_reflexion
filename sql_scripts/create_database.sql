@@ -1,3 +1,5 @@
+-- Value placeholders are rendered from domain_values.py before execution.
+
 DROP TABLE IF EXISTS borrowings;
 DROP TABLE IF EXISTS book_authors;
 DROP TABLE IF EXISTS book_copies;
@@ -32,7 +34,7 @@ CREATE TABLE books (
     isbn TEXT PRIMARY KEY,
     title TEXT,
     -- One book, one category
-    main_category TEXT CHECK (main_category IN ('Fiction', 'Non-Fiction', 'Science', 'History', 'Technology', 'Other')),
+    main_category TEXT CHECK (main_category IN ({{MAIN_CATEGORIES}})),
     language TEXT,
     publisher_id TEXT,
     release_date TEXT,
@@ -51,8 +53,8 @@ CREATE TABLE book_authors (
 CREATE TABLE book_copies (
     copy_id TEXT PRIMARY KEY,
     isbn TEXT,
-    state TEXT CHECK (state IN ('bad', 'okay', 'good', 'very good', 'new')),
-    availability TEXT CHECK (availability IN ('available', 'borrowed', 'reserved', 'broken', 'lost')),
+    state TEXT CHECK (state IN ({{COPY_STATES}})),
+    availability TEXT CHECK (availability IN ({{COPY_AVAILABILITIES}})),
     FOREIGN KEY (isbn) REFERENCES books(isbn)
 );
 

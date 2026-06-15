@@ -7,6 +7,11 @@ from unittest.mock import patch
 
 import bibliothek
 from database import Bibliotheksbestand
+from domain_values import (
+    DEFAULT_COPY_AVAILABILITY,
+    DEFAULT_COPY_STATE,
+    Kategorie,
+)
 from models import BookMetadata
 
 
@@ -27,6 +32,17 @@ class IsbnTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             bibliothek.normalize_isbn("9783596180944")
+
+
+class CategoryClassificationTests(unittest.TestCase):
+    """Prüft die zentral konfigurierte Zuordnung externer Themen."""
+
+    def test_uses_category_priority_for_overlapping_subjects(self):
+        """Technik bleibt bei einem zugleich wissenschaftlichen Thema vorrangig."""
+
+        category = bibliothek._category_from_subjects([{"name": "Computer Science"}])
+
+        self.assertEqual(category, Kategorie.TECHNOLOGIE)
 
 
 class BibliotheksbestandTests(unittest.TestCase):
@@ -60,7 +76,7 @@ class BibliotheksbestandTests(unittest.TestCase):
             "release_date": "2026",
             "page_count": 240,
             "language": "Englisch",
-            "main_category": "Science",
+            "main_category": Kategorie.WISSENSCHAFT,
         }
 
     def test_adds_and_reads_book_through_the_interface(self):
@@ -73,7 +89,7 @@ class BibliotheksbestandTests(unittest.TestCase):
         results = self.bestand.search_books(
             book_query="Test",
             author_query="",
-            category_query="Science",
+            category_query=Kategorie.WISSENSCHAFT,
             isbn_query="978030",
         )
         self.assertEqual(len(results), 1)
@@ -95,7 +111,7 @@ class BibliotheksbestandTests(unittest.TestCase):
         )
         self.assertEqual(
             [(copy.state, copy.availability) for copy in copies],
-            [("new", "available")] * 3,
+            [(DEFAULT_COPY_STATE, DEFAULT_COPY_AVAILABILITY)] * 3,
         )
 
     def test_recreate_resets_a_populated_database(self):

@@ -14,18 +14,14 @@ from enum import StrEnum
 from typing import Any
 
 from database import Bibliotheksbestand
+from domain_values import (
+    Kategorie,
+    Verfuegbarkeitsklasse,
+    availability_presentation,
+    category_label,
+    copy_state_label,
+)
 from models import BookCopy, BookSearchResult
-
-
-class Kategorie(StrEnum):
-    """Sichtbare Kategorien, die eine Katalogsuche einschränken können."""
-
-    BELLETRISTIK = "Belletristik"
-    SACHBUCH = "Sachbuch"
-    WISSENSCHAFT = "Wissenschaft"
-    GESCHICHTE = "Geschichte"
-    TECHNOLOGIE = "Technologie"
-    SONSTIGES = "Sonstiges"
 
 
 class Sortierfeld(StrEnum):
@@ -38,16 +34,6 @@ class Sortierfeld(StrEnum):
     SPRACHE = "language"
     ERSCHEINUNG = "year"
     EXEMPLARE = "copies"
-
-
-class Verfuegbarkeitsklasse(StrEnum):
-    """Semantische Gruppe für die farbliche Darstellung eines Exemplars."""
-
-    VERFUEGBAR = "available"
-    AUSGELIEHEN = "borrowed"
-    RESERVIERT = "reserved"
-    PROBLEM = "problem"
-    UNBEKANNT = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,51 +105,6 @@ class BuchNichtGefunden(KatalogansichtFehler):
     """Das angeforderte Buch ist im Bibliotheksbestand nicht vorhanden."""
 
 
-# Die sichtbaren Kategorien sind absichtlich von den gespeicherten Werten
-# getrennt. Dadurch kreuzen technische Datenbankwerte den Seam nicht.
-_CATEGORY_TO_STORAGE = {
-    Kategorie.BELLETRISTIK: "Fiction",
-    Kategorie.SACHBUCH: "Non-Fiction",
-    Kategorie.WISSENSCHAFT: "Science",
-    Kategorie.GESCHICHTE: "History",
-    Kategorie.TECHNOLOGIE: "Technology",
-    Kategorie.SONSTIGES: "Other",
-}
-_CATEGORY_LABELS = {
-    stored: visible.value for visible, stored in _CATEGORY_TO_STORAGE.items()
-}
-
-# Das Schema erlaubt genau diese Zustände. Zusätzliche bekannte Altwerte
-# bleiben lesbar, damit ältere Daten nicht als Fehler aus der Ansicht fallen.
-_STATE_LABELS = {
-    "bad": "Schlecht",
-    "okay": "In Ordnung",
-    "good": "Gut",
-    "very good": "Sehr gut",
-    "new": "Neu",
-    "used": "Gebraucht",
-    "worn": "Abgenutzt",
-    "damaged": "Beschädigt",
-}
-
-# Jede Verfügbarkeit besitzt einen Text und eine semantische Klasse. Farben
-# bleiben bewusst außerhalb dieses Moduls in der Tkinter-Implementierung.
-_AVAILABILITY_PRESENTATION = {
-    "available": ("Verfügbar", Verfuegbarkeitsklasse.VERFUEGBAR),
-    "borrowed": ("Ausgeliehen", Verfuegbarkeitsklasse.AUSGELIEHEN),
-    "reserved": ("Reserviert", Verfuegbarkeitsklasse.RESERVIERT),
-    "broken": ("Defekt", Verfuegbarkeitsklasse.PROBLEM),
-    "lost": ("Verloren", Verfuegbarkeitsklasse.PROBLEM),
-    # Bekannte Altwerte werden weiterhin sinnvoll dargestellt.
-    "borrowed_out": ("Ausgeliehen", Verfuegbarkeitsklasse.AUSGELIEHEN),
-    "lent": ("Ausgeliehen", Verfuegbarkeitsklasse.AUSGELIEHEN),
-    "loaned": ("Ausgeliehen", Verfuegbarkeitsklasse.AUSGELIEHEN),
-    "unavailable": ("Nicht verfügbar", Verfuegbarkeitsklasse.UNBEKANNT),
-    "maintenance": ("In Bearbeitung", Verfuegbarkeitsklasse.PROBLEM),
-    "damaged": ("Beschädigt", Verfuegbarkeitsklasse.PROBLEM),
-}
-
-
 class Katalogansicht:
     """Bereitet den Bibliotheksbestand für eine menschliche Ansicht auf.
 
@@ -180,9 +121,7 @@ class Katalogansicht:
     def suchen(self, suche: Katalogsuche) -> Katalogseite:
         """Sucht, sortiert und formatiert Bücher ohne sichtbaren Text zu parsen."""
 
-        category_query = (
-            _CATEGORY_TO_STORAGE[suche.kategorie] if suche.kategorie else ""
-        )
+        category_query = suche.kategorie.value if suche.kategorie else ""
 
         try:
             books = self._bestand.search_books(
@@ -264,13 +203,9 @@ class Katalogansicht:
     def _copy_row(cls, copy: BookCopy) -> Exemplarzeile:
         """Übersetzt Zustand und Verfügbarkeit eines Exemplars genau einmal."""
 
-        state = cls._text(copy.state)
-        state_label = _STATE_LABELS.get(state.casefold(), state or "Unbekannt")
-
-        availability = cls._text(copy.availability)
-        availability_label, availability_class = _AVAILABILITY_PRESENTATION.get(
-            availability.casefold(),
-            (availability or "Unbekannt", Verfuegbarkeitsklasse.UNBEKANNT),
+        state_label = copy_state_label(copy.state)
+        availability_label, availability_class = availability_presentation(
+            copy.availability
         )
         return Exemplarzeile(
             exemplar_id=copy.copy_id,
@@ -425,7 +360,7 @@ class Katalogansicht:
         """Übersetzt eine gespeicherte Kategorie für die sichtbare Ansicht."""
 
         text = str(value or "").strip()
-        return _CATEGORY_LABELS.get(text, text)
+        return category_label(text)
 
     @staticmethod
     def _text(value: object | None) -> str:

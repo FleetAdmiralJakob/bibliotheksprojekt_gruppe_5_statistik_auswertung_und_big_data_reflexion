@@ -8,6 +8,8 @@ Implementierungsdetails der jeweiligen Module.
 from dataclasses import dataclass
 from typing import TypedDict
 
+from domain_values import Kategorie
+
 
 @dataclass(frozen=True, slots=True)
 class BookSearchResult:
@@ -41,4 +43,4 @@ class BookMetadata(TypedDict):
     release_date: str
     page_count: int
     language: str
-    main_category: str
+    main_category: Kategorie

@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from database import Bibliotheksbestand
+from domain_values import Kategorie
 from models import BookMetadata
 
 type JsonObject = dict[str, Any]
@@ -83,24 +84,21 @@ def _language_from_edition(edition: Mapping[str, Any] | None) -> str:
     return LANGUAGES.get(code, code.upper())
 
 
-def _category_from_subjects(subjects: Sequence[Mapping[str, Any]]) -> str:
+def _category_from_subjects(subjects: Sequence[Mapping[str, Any]]) -> Kategorie:
     names = [subject.get("name", "") for subject in subjects]
     normalized = {name.casefold() for name in names}
     combined = " ".join(names).casefold()
 
-    if normalized & {"fiction", "belletristik", "roman"}:
-        return "Fiction"
-    if normalized & {"nonfiction", "non-fiction", "non fiction", "sachbuch"}:
-        return "Non-Fiction"
-    if any(
-        word in combined for word in ("computer", "technology", "software", "technik")
-    ):
-        return "Technology"
-    if any(word in combined for word in ("science", "wissenschaft", "mathemat")):
-        return "Science"
-    if any(word in combined for word in ("history", "geschichte", "histor")):
-        return "History"
-    return "Other"
+    categories_by_priority = sorted(
+        Kategorie,
+        key=lambda category: category.classification_priority,
+    )
+    for category in categories_by_priority:
+        if normalized & category.exact_subjects:
+            return category
+        if any(keyword in combined for keyword in category.subject_keywords):
+            return category
+    return Kategorie.SONSTIGES
 
 
 def fetch_book_metadata(isbn: str) -> BookMetadata:
