@@ -15,6 +15,7 @@ from src.shared.http_models import (
     BuchaufnahmeRequest,
     BuchentfernungResponse,
     ErrorResponse,
+    ExemplaraufnahmeRequest,
     HealthResponse,
 )
 from src.shared.models import BookMetadata
@@ -69,6 +70,20 @@ class HttpBibliothekszugang:
                 isbn=isbn,
                 exemplaranzahl=exemplaranzahl,
             ),
+        )
+
+    def exemplare_hinzufuegen(
+        self,
+        isbn: str,
+        exemplaranzahl: int | str,
+    ) -> Buchansicht:
+        """Fügt einem vorhandenen Buch über den Server neue Exemplare hinzu."""
+
+        return self._request(
+            "POST",
+            f"/v1/buecher/{quote(isbn, safe='')}/exemplare",
+            Buchansicht,
+            payload=ExemplaraufnahmeRequest(exemplaranzahl=exemplaranzahl),
         )
 
     def buch_entfernen(self, isbn: str) -> str:

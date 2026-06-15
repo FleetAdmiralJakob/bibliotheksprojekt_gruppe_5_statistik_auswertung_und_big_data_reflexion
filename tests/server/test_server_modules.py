@@ -212,6 +212,38 @@ class BibliotheksbestandTests(unittest.TestCase):
 
         self.assertEqual(self.bestand.search_books("", "", "", ""), [])
 
+    def test_adds_copies_to_an_existing_book(self):
+        """Neue Exemplare setzen IDs und Standardwerte lückenlos fort."""
+
+        self.bestand.add_book(self.metadata(), 2)
+
+        self.bestand.add_book_copies("9780306406157", 2)
+
+        copies = self.bestand.get_book_copies("9780306406157")
+        self.assertEqual(
+            [copy.copy_id for copy in copies],
+            [
+                "9780306406157-001",
+                "9780306406157-002",
+                "9780306406157-003",
+                "9780306406157-004",
+            ],
+        )
+        self.assertEqual(
+            [(copy.state, copy.availability) for copy in copies[-2:]],
+            [(DEFAULT_COPY_STATE, DEFAULT_COPY_AVAILABILITY)] * 2,
+        )
+
+    def test_rejects_more_than_999_total_copies_without_partial_insert(self):
+        """Die Gesamtgrenze wird innerhalb derselben Transaktion geschützt."""
+
+        self.bestand.add_book(self.metadata(), 2)
+
+        with self.assertRaises(ValueError):
+            self.bestand.add_book_copies("9780306406157", 998)
+
+        self.assertEqual(len(self.bestand.get_book_copies("9780306406157")), 2)
+
     def test_delete_removes_book_and_copies_atomically(self):
         """Nach dem Löschen ist das Buch über kein Bestandsinterface erreichbar."""
 
@@ -267,6 +299,19 @@ class BuchlebenszyklusTests(unittest.TestCase):
 
         self.assertEqual(isbn, "9780306406157")
         self.assertEqual(self.bestand.search_books("", "", "", ""), [])
+
+    def test_adds_copies_with_normalized_isbn_and_string_count(self):
+        """Auch der nachträgliche Aufnahmeweg prüft seine Eingabewerte."""
+
+        self.bestand.add_book(BibliotheksbestandTests.metadata(), 1)
+
+        isbn = self.lebenszyklus.exemplare_hinzufuegen(
+            "978-0-306-40615-7",
+            "2",
+        )
+
+        self.assertEqual(isbn, "9780306406157")
+        self.assertEqual(len(self.bestand.get_book_copies(isbn)), 3)
 
 
 if __name__ == "__main__":

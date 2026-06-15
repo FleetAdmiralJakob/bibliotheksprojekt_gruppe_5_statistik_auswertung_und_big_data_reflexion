@@ -161,18 +161,14 @@ def _marc_fields(
 ) -> list[ElementTree.Element]:
     fields: list[ElementTree.Element] = []
     for tag in tags:
-        fields.extend(
-            record.findall(f"{{{MARC_NAMESPACE}}}datafield[@tag='{tag}']")
-        )
+        fields.extend(record.findall(f"{{{MARC_NAMESPACE}}}datafield[@tag='{tag}']"))
     return fields
 
 
 def _marc_values(field: ElementTree.Element, code: str) -> list[str]:
     return [
         str(subfield.text or "").strip()
-        for subfield in field.findall(
-            f"{{{MARC_NAMESPACE}}}subfield[@code='{code}']"
-        )
+        for subfield in field.findall(f"{{{MARC_NAMESPACE}}}subfield[@code='{code}']")
         if str(subfield.text or "").strip()
     ]
 
@@ -242,9 +238,7 @@ def _metadata_from_dnb(isbn: str) -> BookMetadata | None:
     if record is None:
         return None
 
-    title_parts = [
-        _first_marc_value(record, ("245",), code) for code in ("a", "b")
-    ]
+    title_parts = [_first_marc_value(record, ("245",), code) for code in ("a", "b")]
     title = ": ".join(part for part in title_parts if part)
     authors = _authors_from_marc(record)
     page_text = _first_marc_value(record, ("300",), "a")
@@ -334,14 +328,7 @@ class Buchlebenszyklus:
         """Lädt Metadaten und speichert ein neues Buch mit seinen Exemplaren."""
 
         isbn = normalize_isbn(isbn_value)
-        try:
-            copy_count = int(copy_count)
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                "Die Anzahl der Exemplare muss eine ganze Zahl sein."
-            ) from error
-        if copy_count < 1 or copy_count > 999:
-            raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
+        copy_count = self._copy_count(copy_count)
 
         # Die externen Kataloge bleiben vorerst in der Implementierung des
         # Buchlebenszyklus. Ein eigener Adapter ist eine separate Vertiefung.
@@ -351,3 +338,28 @@ class Buchlebenszyklus:
         # Verlag und Exemplare und bestätigt die Änderung atomar.
         self._bestand.add_book(metadata, copy_count)
         return metadata
+
+    def exemplare_hinzufuegen(
+        self,
+        isbn_value: str,
+        copy_count: int | str,
+    ) -> str:
+        """Fügt einem vorhandenen Buch die angeforderte Exemplarzahl hinzu."""
+
+        isbn = normalize_isbn(isbn_value)
+        self._bestand.add_book_copies(isbn, self._copy_count(copy_count))
+        return isbn
+
+    @staticmethod
+    def _copy_count(copy_count: int | str) -> int:
+        """Prüft eine eingegebene Exemplarzahl für alle Aufnahmewege."""
+
+        try:
+            copy_count = int(copy_count)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Die Anzahl der Exemplare muss eine ganze Zahl sein."
+            ) from error
+        if copy_count < 1 or copy_count > 999:
+            raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
+        return copy_count

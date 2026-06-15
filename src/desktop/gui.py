@@ -22,6 +22,7 @@ from typing import Literal, TypedDict
 
 from src.shared.catalog import (
     Bibliothekszugang,
+    Buchansicht,
     Katalogseite,
     Katalogsuche,
     Katalogzeile,
@@ -1250,11 +1251,12 @@ class LibraryApp:
         ttk.Label(
             copies_card.inner_frame, text="Exemplare", style="Section.TLabel"
         ).grid(row=0, column=0, sticky="w")
+        summary_var = tk.StringVar(value=book.exemplarzusammenfassung)
         ttk.Label(
             copies_card.inner_frame,
-            text=book.exemplarzusammenfassung,
+            textvariable=summary_var,
             style="Field.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
 
         columns = ("copy_id", "state", "availability")
         copy_table = ttk.Treeview(
@@ -1281,21 +1283,27 @@ class LibraryApp:
                 foreground=foreground,
             )
 
-        if book.exemplare:
-            # Texte und semantische Verfügbarkeitsklasse kommen fertig aus der
-            # Katalogansicht; Tkinter ergänzt nur die konkrete Farbe.
-            for copy in book.exemplare:
-                copy_table.insert(
-                    "",
-                    "end",
-                    values=(
-                        copy.exemplar_id,
-                        copy.zustand,
-                        copy.verfuegbarkeit,
-                    ),
-                    tags=(copy.klasse.value,),
-                )
-        else:
+        def render_copies(updated_book: Buchansicht) -> None:
+            """Aktualisiert Zusammenfassung und Tabelle nach einer Änderung."""
+
+            summary_var.set(updated_book.exemplarzusammenfassung)
+            copy_table.delete(*copy_table.get_children())
+            if updated_book.exemplare:
+                # Texte und semantische Verfügbarkeitsklasse kommen fertig aus
+                # der Katalogansicht; Tkinter ergänzt nur die konkrete Farbe.
+                for copy in updated_book.exemplare:
+                    copy_table.insert(
+                        "",
+                        "end",
+                        values=(
+                            copy.exemplar_id,
+                            copy.zustand,
+                            copy.verfuegbarkeit,
+                        ),
+                        tags=(copy.klasse.value,),
+                    )
+                return
+
             copy_table.insert(
                 "",
                 "end",
@@ -1303,14 +1311,165 @@ class LibraryApp:
                 tags=(Verfuegbarkeitsklasse.UNBEKANNT.value,),
             )
 
+        add_copy_btn = ActionButton(
+            copies_card.inner_frame,
+            text="Exemplar hinzufügen",
+            command=lambda: self.open_add_copies_dialog(
+                parent=detail,
+                isbn=book.isbn,
+                title=book.titel,
+                on_success=render_copies,
+            ),
+        )
+        add_copy_btn.grid(row=0, column=1, sticky="e")
+
         scrollbar = ttk.Scrollbar(
             copies_card.inner_frame, orient="vertical", command=copy_table.yview
         )
         copy_table.configure(yscrollcommand=scrollbar.set)
         copy_table.grid(row=2, column=0, sticky="nsew")
         scrollbar.grid(row=2, column=1, sticky="ns")
+        render_copies(book)
 
         self.status_var.set(f'Exemplare von "{book.titel}" geöffnet')
+
+    def open_add_copies_dialog(
+        self,
+        *,
+        parent: tk.Toplevel,
+        isbn: str,
+        title: str,
+        on_success: Callable[[Buchansicht], None],
+    ) -> None:
+        """Öffnet ein Formular für neue Exemplare eines vorhandenen Buches."""
+
+        dialog = tk.Toplevel(parent)
+        self._apply_window_icon(dialog)
+        dialog.title("Exemplare hinzufügen")
+        dialog.resizable(False, False)
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        copies_var = tk.StringVar(value="1")
+        dialog_status = tk.StringVar(value=f'Neue Exemplare für "{title}" anlegen.')
+
+        card = RoundedFrame(
+            dialog,
+            radius=24,
+            bg=COLORS["surface"],
+            bordercolor=COLORS["border"],
+            padding=(24, 24),
+        )
+        card.pack(fill="both", expand=True)
+        card.inner_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            card.inner_frame,
+            text="Neue Exemplare",
+            style="Section.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 18))
+        ttk.Label(
+            card.inner_frame,
+            text="ANZAHL EXEMPLARE",
+            style="Field.TLabel",
+        ).grid(row=1, column=0, sticky="w")
+        copies = ttk.Spinbox(
+            card.inner_frame,
+            from_=1,
+            to=999,
+            textvariable=copies_var,
+            width=10,
+        )
+        copies.grid(row=2, column=0, sticky="w", pady=(6, 14))
+
+        ttk.Label(
+            card.inner_frame,
+            textvariable=dialog_status,
+            style="Field.TLabel",
+            wraplength=360,
+        ).grid(row=3, column=0, sticky="w")
+
+        actions = ttk.Frame(card.inner_frame, style="Card.TFrame")
+        actions.grid(row=4, column=0, sticky="e", pady=(22, 0))
+        cancel_btn = ActionButton(
+            actions,
+            text="Abbrechen",
+            command=dialog.destroy,
+            variant="secondary",
+        )
+        cancel_btn.pack(side="left", padx=(0, 10))
+        add_btn = ActionButton(
+            actions,
+            text="Hinzufügen",
+            variant="primary",
+        )
+        add_btn.pack(side="left")
+        submitting = False
+
+        def finish_success(updated_book: Buchansicht) -> None:
+            if not dialog.winfo_exists():
+                return
+            dialog.destroy()
+            on_success(updated_book)
+            self.run_search()
+            self.status_var.set(f'Neue Exemplare für "{title}" wurden hinzugefügt')
+            messagebox.showinfo(
+                "Exemplare hinzugefügt",
+                "Die neuen Exemplare wurden erfolgreich gespeichert.",
+                parent=parent,
+            )
+
+        def finish_error(error: Exception) -> None:
+            nonlocal submitting
+            if not dialog.winfo_exists():
+                return
+            submitting = False
+            add_btn.set_enabled(True)
+            cancel_btn.set_enabled(True)
+            dialog_status.set("Die Exemplare konnten nicht hinzugefügt werden.")
+            messagebox.showerror("Hinzufügen fehlgeschlagen", str(error), parent=dialog)
+
+        def submit() -> None:
+            nonlocal submitting
+            if submitting:
+                return
+            submitting = True
+            copy_count = copies_var.get().strip()
+            add_btn.set_enabled(False)
+            cancel_btn.set_enabled(False)
+            dialog_status.set("Exemplare werden gespeichert ...")
+            result_queue: Queue[Buchansicht | Exception] = Queue()
+
+            def worker() -> None:
+                try:
+                    result_queue.put(
+                        self.bibliothek.exemplare_hinzufuegen(isbn, copy_count)
+                    )
+                except Exception as error:
+                    result_queue.put(error)
+
+            Thread(target=worker, daemon=True).start()
+
+            def poll_result() -> None:
+                try:
+                    result = result_queue.get_nowait()
+                except Empty:
+                    if dialog.winfo_exists():
+                        self.root.after(50, poll_result)
+                    return
+
+                if isinstance(result, Exception):
+                    finish_error(result)
+                else:
+                    finish_success(result)
+
+            self.root.after(50, poll_result)
+
+        add_btn.set_command(submit)
+        dialog.bind("<Return>", lambda _event: submit())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        copies.focus_set()
+        copies.selection_range(0, "end")
 
     def open_results_context_menu(self, event):
         """Öffnet beim Rechtsklick ein Menü für die angeklickte Tabellenzeile."""

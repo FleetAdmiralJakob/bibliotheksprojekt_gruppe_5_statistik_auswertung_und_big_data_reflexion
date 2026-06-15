@@ -91,11 +91,12 @@ class HttpTransportTests(unittest.TestCase):
         self.assertTrue(self.client.health())
         metadata = self.client.buch_aufnehmen("978-0-306-40615-7", 2)
         page = self.client.suchen(Katalogsuche(isbn=metadata.isbn))
-        book = self.client.buch(metadata.isbn)
+        book = self.client.exemplare_hinzufuegen(metadata.isbn, 2)
         removed_isbn = self.client.buch_entfernen(metadata.isbn)
 
         self.assertEqual(page.zeilen[0].titel, "Remote Test")
-        self.assertEqual(len(book.exemplare), 2)
+        self.assertEqual(len(book.exemplare), 4)
+        self.assertEqual(book.exemplare[-1].exemplar_id, "9780306406157-004")
         self.assertEqual(removed_isbn, metadata.isbn)
         self.assertEqual(
             self.client.suchen(Katalogsuche(isbn=metadata.isbn)).zeilen,
@@ -111,3 +112,4 @@ class HttpTransportTests(unittest.TestCase):
         self.assertIn("Katalogseite", schemas)
         self.assertIn("BookMetadata", schemas)
         self.assertIn("BuchaufnahmeRequest", schemas)
+        self.assertIn("ExemplaraufnahmeRequest", schemas)

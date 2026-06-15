@@ -252,6 +252,55 @@ class Bibliotheksbestand:
 
         self._run_transaction(insert_book)
 
+    def add_book_copies(self, isbn: str, copy_count: int) -> None:
+        """Fügt einem vorhandenen Buch neue Exemplare atomar hinzu."""
+
+        if copy_count < 1 or copy_count > 999:
+            raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
+
+        def insert_copies(cursor: sqlite3.Cursor) -> None:
+            if not cursor.execute(
+                "SELECT 1 FROM books WHERE isbn = ?",
+                (isbn,),
+            ).fetchone():
+                raise ValueError("Ein Buch mit dieser ISBN ist nicht vorhanden.")
+
+            existing_ids = {
+                cast(str, row[0])
+                for row in cursor.execute(
+                    "SELECT copy_id FROM book_copies WHERE isbn = ?",
+                    (isbn,),
+                ).fetchall()
+            }
+            if len(existing_ids) + copy_count > 999:
+                raise ValueError(
+                    "Ein Buch darf insgesamt höchstens 999 Exemplare besitzen."
+                )
+
+            available_ids = (
+                copy_id
+                for number in range(1, 1000)
+                if (copy_id := f"{isbn}-{number:03}") not in existing_ids
+            )
+            new_ids = [next(available_ids) for _ in range(copy_count)]
+            cursor.executemany(
+                """
+                INSERT INTO book_copies (copy_id, isbn, state, availability)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        copy_id,
+                        isbn,
+                        DEFAULT_COPY_STATE,
+                        DEFAULT_COPY_AVAILABILITY,
+                    )
+                    for copy_id in new_ids
+                ],
+            )
+
+        self._run_transaction(insert_copies)
+
     def delete_book(self, isbn: str) -> None:
         """Löscht ein Buch und seine direkt abhängigen Bestandsdaten atomar."""
 

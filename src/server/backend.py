@@ -39,6 +39,19 @@ class Bibliotheksbackend:
 
         return self._buchlebenszyklus.aufnehmen(isbn, exemplaranzahl)
 
+    def exemplare_hinzufuegen(
+        self,
+        isbn: str,
+        exemplaranzahl: int | str,
+    ) -> Buchansicht:
+        """Fügt einem vorhandenen Buch neue Exemplare hinzu."""
+
+        normalized_isbn = self._buchlebenszyklus.exemplare_hinzufuegen(
+            isbn,
+            exemplaranzahl,
+        )
+        return self._katalog.buch(normalized_isbn)
+
     def buch_entfernen(self, isbn: str) -> str:
         """Entfernt ein Buch aus dem Bibliotheksbestand."""
 

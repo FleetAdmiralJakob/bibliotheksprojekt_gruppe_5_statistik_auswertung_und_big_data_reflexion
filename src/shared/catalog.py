@@ -109,5 +109,12 @@ class Bibliothekszugang(Protocol):
     ) -> BookMetadata:
         """Nimmt ein Buch mit Exemplaren in den Bibliotheksbestand auf."""
 
+    def exemplare_hinzufuegen(
+        self,
+        isbn: str,
+        exemplaranzahl: int | str,
+    ) -> Buchansicht:
+        """Fügt einem vorhandenen Buch neue Exemplare hinzu."""
+
     def buch_entfernen(self, isbn: str) -> str:
         """Entfernt ein Buch aus dem Bibliotheksbestand."""

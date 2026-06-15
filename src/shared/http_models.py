@@ -16,6 +16,12 @@ class BuchaufnahmeRequest(HttpModel):
     exemplaranzahl: int | str
 
 
+class ExemplaraufnahmeRequest(HttpModel):
+    """Eingabe für neue Exemplare eines vorhandenen Buches."""
+
+    exemplaranzahl: int | str
+
+
 class BuchentfernungResponse(HttpModel):
     """Bestätigung einer Buchentfernung."""
 
