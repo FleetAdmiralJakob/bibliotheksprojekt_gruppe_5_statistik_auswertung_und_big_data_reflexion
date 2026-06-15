@@ -36,7 +36,7 @@ class Kategorie(StrEnum):
         "Fiction",
         "Belletristik",
         ("fiction", "belletristik", "roman"),
-        (),
+        ("fantasy",),
         0,
     )
     SACHBUCH = (

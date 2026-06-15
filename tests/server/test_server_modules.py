@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from unittest.mock import patch
 
@@ -49,6 +50,78 @@ class CategoryClassificationTests(unittest.TestCase):
         )
 
         self.assertEqual(category, Kategorie.TECHNOLOGIE)
+
+
+class BookMetadataFetchTests(unittest.TestCase):
+    """Prüft die Katalog-Fallbacks ohne echte Netzwerkzugriffe."""
+
+    DNB_RESPONSE = """\
+    <searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/">
+      <numberOfRecords>1</numberOfRecords>
+      <records>
+        <record>
+          <recordData>
+            <record xmlns="http://www.loc.gov/MARC21/slim">
+              <datafield tag="041"><subfield code="a">ger</subfield></datafield>
+              <datafield tag="100">
+                <subfield code="a">Scamander, Newt</subfield>
+                <subfield code="4">aut</subfield>
+              </datafield>
+              <datafield tag="245">
+                <subfield code="a">
+                  Phantastische Tierwesen und wo sie zu finden sind
+                </subfield>
+              </datafield>
+              <datafield tag="264">
+                <subfield code="b">Carlsen</subfield>
+                <subfield code="c">2017</subfield>
+              </datafield>
+              <datafield tag="300">
+                <subfield code="a">133 Seiten</subfield>
+              </datafield>
+              <datafield tag="653">
+                <subfield code="a">Fantasy-Bücher</subfield>
+              </datafield>
+              <datafield tag="700">
+                <subfield code="a">Rowling, J. K.</subfield>
+                <subfield code="4">aut</subfield>
+              </datafield>
+              <datafield tag="700">
+                <subfield code="a">Gill, Olivia Lomenech</subfield>
+                <subfield code="4">art</subfield>
+              </datafield>
+            </record>
+          </recordData>
+        </record>
+      </records>
+    </searchRetrieveResponse>
+    """
+
+    @patch("src.server.buchlebenszyklus._load_xml")
+    @patch("src.server.buchlebenszyklus._load_json")
+    def test_uses_dnb_when_open_library_has_no_isbn(
+        self,
+        load_json,
+        load_xml,
+    ):
+        """Die gemeldete Carlsen-ISBN wird über den DNB-Katalog gefunden."""
+
+        load_json.return_value = {}
+        load_xml.return_value = ElementTree.fromstring(self.DNB_RESPONSE)
+
+        metadata = buchlebenszyklus.fetch_book_metadata("9783551556981")
+
+        self.assertEqual(
+            metadata.title,
+            "Phantastische Tierwesen und wo sie zu finden sind",
+        )
+        self.assertEqual(metadata.authors, ("Newt Scamander", "J. K. Rowling"))
+        self.assertEqual(metadata.publisher, "Carlsen")
+        self.assertEqual(metadata.release_date, "2017")
+        self.assertEqual(metadata.page_count, 133)
+        self.assertEqual(metadata.language, "Deutsch")
+        self.assertEqual(metadata.main_category, Kategorie.BELLETRISTIK)
+        load_xml.assert_called_once()
 
 
 class BibliotheksbestandTests(unittest.TestCase):

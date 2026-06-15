@@ -7,6 +7,7 @@ gespeicherte Bibliotheksbestand liegt hinter dem Interface von
 
 import json
 import re
+import xml.etree.ElementTree as ElementTree
 from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -21,7 +22,9 @@ type JsonObject = dict[str, Any]
 
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
 OPEN_LIBRARY_ISBN_URL = "https://openlibrary.org/isbn/{isbn}.json"
+DNB_SRU_URL = "https://services.dnb.de/sru/dnb"
 USER_AGENT = "SchoolLibraryCatalog/1.0 (educational project)"
+MARC_NAMESPACE = "http://www.loc.gov/MARC21/slim"
 
 LANGUAGES = {
     "de": "Deutsch",
@@ -71,6 +74,23 @@ def _load_json(url: str) -> JsonObject | None:
         raise RuntimeError("Die Buch-API hat ungültige Daten geliefert.") from error
 
 
+def _load_xml(url: str) -> ElementTree.Element | None:
+    request = Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urlopen(request, timeout=10) as response:
+            return ElementTree.parse(response).getroot()
+    except HTTPError as error:
+        if error.code == 404:
+            return None
+        raise RuntimeError(
+            f"Die Buch-API antwortet mit Fehler {error.code}."
+        ) from error
+    except (URLError, TimeoutError, OSError) as error:
+        raise RuntimeError("Die Buch-API ist momentan nicht erreichbar.") from error
+    except ElementTree.ParseError as error:
+        raise RuntimeError("Die Buch-API hat ungültige Daten geliefert.") from error
+
+
 def _language_from_edition(edition: Mapping[str, Any] | None) -> str:
     languages = edition.get("languages", []) if edition else []
     if not languages:
@@ -96,14 +116,12 @@ def _category_from_subjects(subjects: Sequence[Mapping[str, Any]]) -> Kategorie:
     return Kategorie.SONSTIGES
 
 
-def fetch_book_metadata(isbn: str) -> BookMetadata:
-    """Lädt die Metadaten einer ISBN aus der Open‑Library‑API."""
-
+def _metadata_from_open_library(isbn: str) -> BookMetadata | None:
     query = urlencode({"bibkeys": f"ISBN:{isbn}", "jscmd": "data", "format": "json"})
     response = _load_json(f"{OPEN_LIBRARY_BOOKS_URL}?{query}")
     book = (response or {}).get(f"ISBN:{isbn}")
     if not book:
-        raise ValueError("Zu dieser ISBN wurden keine Buchdaten gefunden.")
+        return None
 
     edition = _load_json(OPEN_LIBRARY_ISBN_URL.format(isbn=quote(isbn)))
     authors = [
@@ -135,6 +153,159 @@ def fetch_book_metadata(isbn: str) -> BookMetadata:
         language=_language_from_edition(edition),
         main_category=_category_from_subjects(book.get("subjects", [])),
     )
+
+
+def _marc_fields(
+    record: ElementTree.Element,
+    tags: Sequence[str],
+) -> list[ElementTree.Element]:
+    fields: list[ElementTree.Element] = []
+    for tag in tags:
+        fields.extend(
+            record.findall(f"{{{MARC_NAMESPACE}}}datafield[@tag='{tag}']")
+        )
+    return fields
+
+
+def _marc_values(field: ElementTree.Element, code: str) -> list[str]:
+    return [
+        str(subfield.text or "").strip()
+        for subfield in field.findall(
+            f"{{{MARC_NAMESPACE}}}subfield[@code='{code}']"
+        )
+        if str(subfield.text or "").strip()
+    ]
+
+
+def _first_marc_value(
+    record: ElementTree.Element,
+    tags: Sequence[str],
+    code: str,
+) -> str:
+    for field in _marc_fields(record, tags):
+        values = _marc_values(field, code)
+        if values:
+            return values[0].rstrip(" /:;,")
+    return ""
+
+
+def _personal_name(value: str) -> str:
+    family_name, separator, given_names = value.partition(",")
+    if not separator:
+        return value
+    return f"{given_names.strip()} {family_name.strip()}".strip()
+
+
+def _authors_from_marc(record: ElementTree.Element) -> tuple[str, ...]:
+    authors: list[str] = []
+    author_role_codes = {"aut"}
+    author_role_names = {"autor", "verfasser", "verfasserin"}
+
+    for field in _marc_fields(record, ("100", "110", "700", "710")):
+        tag = field.get("tag", "")
+        role_codes = {value.casefold() for value in _marc_values(field, "4")}
+        role_names = {value.casefold() for value in _marc_values(field, "e")}
+        has_role = bool(role_codes or role_names)
+        is_author = bool(
+            role_codes & author_role_codes or role_names & author_role_names
+        )
+        if has_role and not is_author:
+            continue
+        if tag.startswith("7") and not is_author:
+            continue
+
+        names = _marc_values(field, "a")
+        if not names:
+            continue
+        name = _personal_name(names[0]) if tag in {"100", "700"} else names[0]
+        if name not in authors:
+            authors.append(name)
+
+    return tuple(authors)
+
+
+def _metadata_from_dnb(isbn: str) -> BookMetadata | None:
+    query = urlencode(
+        {
+            "version": "1.1",
+            "operation": "searchRetrieve",
+            "query": f"num={isbn}",
+            "recordSchema": "MARC21-xml",
+            "maximumRecords": 1,
+        }
+    )
+    response = _load_xml(f"{DNB_SRU_URL}?{query}")
+    if response is None:
+        return None
+
+    record = response.find(f".//{{{MARC_NAMESPACE}}}record")
+    if record is None:
+        return None
+
+    title_parts = [
+        _first_marc_value(record, ("245",), code) for code in ("a", "b")
+    ]
+    title = ": ".join(part for part in title_parts if part)
+    authors = _authors_from_marc(record)
+    page_text = _first_marc_value(record, ("300",), "a")
+    page_match = re.search(r"\d+", page_text)
+    page_count = int(page_match.group()) if page_match else 0
+
+    language_code = _first_marc_value(record, ("041",), "a").casefold()
+    subject_names = [
+        value
+        for field in _marc_fields(record, ("650", "653", "655", "689", "926"))
+        for code in ("a", "x")
+        for value in _marc_values(field, code)
+    ]
+
+    if not title:
+        raise ValueError("Die Buch-API liefert keinen Titel für diese ISBN.")
+    if not authors:
+        raise ValueError("Die Buch-API liefert keinen Autor für diese ISBN.")
+    if page_count <= 0:
+        raise ValueError("Die Buch-API liefert keine gültige Seitenzahl.")
+
+    return BookMetadata(
+        isbn=isbn,
+        title=title,
+        authors=authors,
+        publisher=_first_marc_value(record, ("264", "260"), "b"),
+        release_date=_first_marc_value(record, ("264", "260"), "c"),
+        page_count=page_count,
+        language=LANGUAGES.get(language_code, language_code.upper()),
+        main_category=_category_from_subjects(
+            [{"name": name} for name in subject_names]
+        ),
+    )
+
+
+def fetch_book_metadata(isbn: str) -> BookMetadata:
+    """Lädt Metadaten zuerst aus Open Library, dann aus dem DNB-Katalog."""
+
+    open_library_error: ValueError | RuntimeError | None = None
+    try:
+        metadata = _metadata_from_open_library(isbn)
+    except (ValueError, RuntimeError) as error:
+        open_library_error = error
+    else:
+        if metadata is not None:
+            return metadata
+
+    try:
+        metadata = _metadata_from_dnb(isbn)
+    except RuntimeError as error:
+        if isinstance(open_library_error, RuntimeError):
+            raise RuntimeError(
+                "Die Buch-APIs sind momentan nicht erreichbar."
+            ) from error
+        raise
+
+    if metadata is not None:
+        return metadata
+    if open_library_error is not None:
+        raise open_library_error
+    raise ValueError("Zu dieser ISBN wurden keine Buchdaten gefunden.")
 
 
 class Buchlebenszyklus:
@@ -172,7 +343,7 @@ class Buchlebenszyklus:
         if copy_count < 1 or copy_count > 999:
             raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
 
-        # Open Library bleibt vorerst in der Implementierung des
+        # Die externen Kataloge bleiben vorerst in der Implementierung des
         # Buchlebenszyklus. Ein eigener Adapter ist eine separate Vertiefung.
         metadata = fetch_book_metadata(isbn)
 
