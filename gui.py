@@ -10,8 +10,10 @@ Dadurch besitzt die GUI weder SQL-Wissen noch fachliche Sortier- oder
 Übersetzungsregeln. Sie bleibt für Widgets, Farben und Dialoge zuständig.
 """
 
+import sys
 import tkinter as tk
 from collections.abc import Callable
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
 from tkinter import font as tkfont
@@ -36,6 +38,13 @@ from models import BookMetadata
 
 type RGB = tuple[int, int, int]
 type ActionButtonVariant = Literal["primary", "secondary"]
+
+APP_DIRECTORY = Path(__file__).resolve().parent
+LOGO_PATH = APP_DIRECTORY / "Logo Bibliothek.png"
+WINDOWS_APP_ID = "FSG.Bibliothekskatalog"
+HEADER_LOGO_MAX_WIDTH = 64
+HEADER_LOGO_MAX_HEIGHT = 72
+WINDOW_ICON_SIZES = (256, 64, 32, 16)
 
 
 # Diese Auswahl bedeutet bewusst keinen Kategorie-Filter. Alle konkreten
@@ -113,6 +122,62 @@ def _darken(hex_color: str, factor: float) -> str:
     new_g = int(g * (1 - factor))
     new_b = int(b * (1 - factor))
     return _rgb_to_hex((new_r, new_g, new_b))
+
+
+def _subsample_to_fit(
+    image: tk.PhotoImage,
+    *,
+    max_width: int,
+    max_height: int,
+) -> tk.PhotoImage:
+    """Verkleinert ein Tk-Bild proportional auf die angegebenen Grenzen."""
+
+    width_factor = (image.width() + max_width - 1) // max_width
+    height_factor = (image.height() + max_height - 1) // max_height
+    factor = max(1, width_factor, height_factor)
+    return image.subsample(factor)
+
+
+def _center_square_image(
+    master: tk.Misc,
+    source: tk.PhotoImage,
+) -> tk.PhotoImage:
+    """Schneidet mittig eine quadratische Icon-Version des Logos aus."""
+
+    size = min(source.width(), source.height())
+    left = (source.width() - size) // 2
+    top = (source.height() - size) // 2
+    square = tk.PhotoImage(master=master, width=size, height=size)
+    square.tk.call(
+        str(square),
+        "copy",
+        str(source),
+        "-from",
+        left,
+        top,
+        left + size,
+        top + size,
+        "-to",
+        0,
+        0,
+    )
+    return square
+
+
+def _set_windows_app_id() -> None:
+    """Sorgt unter Windows für ein eigenes Taskleisten-Symbol der Anwendung."""
+
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+    except AttributeError, OSError:
+        # Ältere oder eingeschränkte Windows-Umgebungen unterstützen die API
+        # gegebenenfalls nicht; Tkinter kann dann weiterhin normal starten.
+        return
 
 
 # Abgeleitete Farben. Das Layout verwendet überwiegend den Hintergrundton,
@@ -548,6 +613,7 @@ class LibraryApp:
         self.root.geometry("1040x680")
         self.root.minsize(820, 560)
         self.root.configure(background=COLORS["background"])
+        self._load_branding()
 
         # Die Katalogansicht ist die einzige lesende Quelle für sichtbare Buch-
         # und Exemplarwerte. Sie arbeitet stateless auf dem tiefen Bestand.
@@ -593,6 +659,35 @@ class LibraryApp:
         # Der Cursor soll beim Start direkt im Titelfeld stehen.
         self.title_entry.focus_set()
 
+    def _load_branding(self) -> None:
+        """Lädt Logo sowie passende Varianten für Kopfzeile und Fenster."""
+
+        self.logo_source_image = tk.PhotoImage(
+            master=self.root,
+            file=str(LOGO_PATH),
+        )
+        self.header_logo_image = _subsample_to_fit(
+            self.logo_source_image,
+            max_width=HEADER_LOGO_MAX_WIDTH,
+            max_height=HEADER_LOGO_MAX_HEIGHT,
+        )
+
+        square_logo = _center_square_image(self.root, self.logo_source_image)
+        self.window_icon_images = tuple(
+            _subsample_to_fit(
+                square_logo,
+                max_width=size,
+                max_height=size,
+            )
+            for size in WINDOW_ICON_SIZES
+        )
+        self.root.iconphoto(True, *self.window_icon_images)
+
+    def _apply_window_icon(self, window: tk.Toplevel) -> None:
+        """Wendet das Anwendungslogo explizit auf ein Unterfenster an."""
+
+        window.iconphoto(False, *self.window_icon_images)
+
     def _configure_styles(self):
         """Definiert das gemeinsame visuelle Erscheinungsbild der Widgets."""
 
@@ -612,6 +707,7 @@ class LibraryApp:
         # weiße Kartenfläche sein.
         style.configure("App.TFrame", background=COLORS["background"])
         style.configure("Card.TFrame", background=COLORS["surface"])
+        style.configure("HeaderLogo.TLabel", background=COLORS["background"])
 
         # Große Überschrift der Anwendung.
         style.configure(
@@ -726,21 +822,26 @@ class LibraryApp:
         # Kopfbereich mit Titel und kurzer Beschreibung.
         header = ttk.Frame(container, style="App.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 22))
-        header.columnconfigure(0, weight=1)
+        header.columnconfigure(1, weight=1)
+        ttk.Label(
+            header,
+            image=self.header_logo_image,
+            style="HeaderLogo.TLabel",
+        ).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
         ttk.Label(header, text="Bibliothekskatalog", style="Title.TLabel").grid(
-            row=0, column=0, sticky="w"
+            row=0, column=1, sticky="sw"
         )
         ttk.Label(
             header,
             text="Durchsuche den Bestand nach Titel, Autor, Kategorie oder ISBN.",
             style="Subtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=1, column=1, sticky="nw", pady=(4, 0))
         ActionButton(
             header,
             text="Buch hinzufügen",
             command=self.open_add_book_dialog,
             variant="primary",
-        ).grid(row=0, column=1, rowspan=2, sticky="ne")
+        ).grid(row=0, column=2, rowspan=2, sticky="ne")
 
         # Die Suchfelder liegen zusammen in einer weißen "Karte". Wir nutzen
         # einen abgerundeten Frame, um weichere Ecken zu erhalten.
@@ -1112,6 +1213,7 @@ class LibraryApp:
             return
 
         detail = tk.Toplevel(self.root)
+        self._apply_window_icon(detail)
         detail.title(f"Exemplare: {book.titel}")
         detail.geometry("760x460")
         detail.minsize(620, 360)
@@ -1301,6 +1403,7 @@ class LibraryApp:
         """Öffnet das Formular zum Eintragen eines neuen Buches."""
 
         dialog = tk.Toplevel(self.root)
+        self._apply_window_icon(dialog)
         dialog.title("Buch hinzufügen")
         dialog.resizable(False, False)
         dialog.transient(self.root)
@@ -1435,8 +1538,10 @@ class LibraryApp:
 def main():
     """Startet das Hauptfenster und die Tkinter-Ereignisschleife."""
 
+    _set_windows_app_id()
+
     # Jede Tkinter-Anwendung braucht genau ein Hauptfenster.
-    root = tk.Tk()
+    root = tk.Tk(className="Bibliothekskatalog")
 
     # Die Klasse baut alle Inhalte in dieses Fenster ein.
     LibraryApp(root)
