@@ -197,6 +197,25 @@ $env:BIBLIOTHEK_SERVER_PORT = "8765"
 $env:BIBLIOTHEK_DATABASE_PATH = "C:\data\bibliothek.db"
 ```
 
+## Showcase als einzelne Windows-EXE
+
+Das Build-Skript erzeugt eine einzelne Datei, die den lokalen Server und die
+Desktop-Oberfläche gemeinsam startet:
+
+```powershell
+.\build-showcase.ps1
+```
+
+Das Ergebnis liegt unter `dist\Bibliothekskatalog.exe`. Auf dem Zielrechner
+werden weder Python noch `uv` benötigt. Beim ersten Start wird die eingebettete
+Beispieldatenbank als beschreibbare Kopie unter
+`%LOCALAPPDATA%\BibliotheksprojektGruppe5\bibliothek.db` angelegt. Änderungen
+bleiben dadurch zwischen Programmstarts erhalten.
+
+Zum Erzeugen der EXE werden Windows, Internetzugriff und `uv` benötigt. Das
+Skript verwendet eine festgelegte PyInstaller-Version und baut die EXE für die
+Windows-Architektur des Build-Rechners.
+
 ## Qualitätssicherung
 
 ```powershell
