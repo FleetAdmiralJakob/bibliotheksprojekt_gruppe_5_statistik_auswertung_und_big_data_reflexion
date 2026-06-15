@@ -1,6 +1,6 @@
-"""Startpunkt für die Bibliotheksanwendung."""
+"""Kompatibler Startpunkt für den eigenständigen Desktop-Client."""
 
-from gui import main
+from src.desktop.main import main
 
 if __name__ == "__main__":
     main()

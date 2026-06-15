@@ -3,11 +3,11 @@
 Dieses Modul enthält ausschließlich die Oberfläche und deren Bedienlogik:
 
 1. Tkinter zeichnet Fenster, Eingabefelder, Buttons und Tabellen.
-2. ``Katalogansicht`` liefert fertig aufbereitete Buch- und Exemplarwerte.
-3. ``Bibliotheksbestand`` hält SQLite hinter seinem eigenen Interface.
+2. Geteilte Fachwerte beschreiben Katalogseiten und Buchansichten.
+3. ``Bibliothekszugang`` liefert sie unabhängig vom Transport-Adapter.
 
-Dadurch besitzt die GUI weder SQL-Wissen noch fachliche Sortier- oder
-Übersetzungsregeln. Sie bleibt für Widgets, Farben und Dialoge zuständig.
+Dadurch besitzt die GUI weder Server-, SQL- noch Transportwissen. Sie bleibt
+für Widgets, Farben und Dialoge zuständig.
 """
 
 import sys
@@ -20,26 +20,25 @@ from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 from typing import Literal, TypedDict
 
-# Schreiben und Löschen bleiben Teil des Buchlebenszyklus. Die lesende
-# Katalogansicht erhält dagegen direkt den Bibliotheksbestand.
-from bibliothek import add_book, delete_book
-from database import Bibliotheksbestand
-from domain_values import Kategorie, Verfuegbarkeitsklasse
-from katalogansicht import (
-    Katalogansicht,
+from src.shared.catalog import (
+    Bibliothekszugang,
     Katalogseite,
     Katalogsuche,
     Katalogzeile,
     Sortierfeld,
     Sortierung,
 )
-from models import BookMetadata
+from src.shared.domain_values import (
+    Kategorie,
+    Verfuegbarkeitsklasse,
+)
+from src.shared.models import BookMetadata
 
 type RGB = tuple[int, int, int]
 type ActionButtonVariant = Literal["primary", "secondary"]
 
 APP_DIRECTORY = Path(__file__).resolve().parent
-LOGO_PATH = APP_DIRECTORY / "Logo Bibliothek.png"
+LOGO_PATH = APP_DIRECTORY / "assets" / "Logo Bibliothek.png"
 WINDOWS_APP_ID = "FSG.Bibliothekskatalog"
 HEADER_LOGO_MAX_WIDTH = 64
 HEADER_LOGO_MAX_HEIGHT = 72
@@ -584,11 +583,11 @@ class LibraryApp:
     auf Eingabefelder, Tabelle und Statuszeile zugreifen.
     """
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, bibliothek: Bibliothekszugang):
         """Initialisiert Fensterzustand, Design und Oberfläche.
 
-        ``__init__`` wird automatisch ausgeführt, sobald unten mit
-        ``LibraryApp(root)`` ein Objekt dieser Klasse erzeugt wird.
+        ``__init__`` wird automatisch ausgeführt, sobald unten ein
+        ``LibraryApp``-Objekt mit Fenster und Bibliothekszugang erzeugt wird.
         """
 
         # ``root`` ist das Hauptfenster, das in ``main`` mit ``tk.Tk()``
@@ -603,9 +602,9 @@ class LibraryApp:
         self.root.configure(background=COLORS["background"])
         self._load_branding()
 
-        # Die Katalogansicht ist die einzige lesende Quelle für sichtbare Buch-
-        # und Exemplarwerte. Sie arbeitet stateless auf dem tiefen Bestand.
-        self.katalog = Katalogansicht(Bibliotheksbestand())
+        # Der Transport-Adapter erfüllt das geteilte Bibliothekszugang-Interface.
+        # Servermodule und Transportdetails bleiben außerhalb der GUI.
+        self.bibliothek = bibliothek
 
         # StringVar verbindet einen Python-Textwert mit einem Tkinter-Widget.
         # Wenn ein Benutzer tippt, liefert ``variable.get()`` den aktuellen
@@ -1081,7 +1080,7 @@ class LibraryApp:
         """Lädt eine neue Seite über das Katalogansicht-Interface."""
 
         try:
-            page = self.katalog.suchen(self._current_catalog_search())
+            page = self.bibliothek.suchen(self._current_catalog_search())
         except Exception as error:
             # Eine Messagebox ist für Benutzer verständlicher als ein
             # Python-Traceback in einem möglicherweise unsichtbaren Terminal.
@@ -1190,7 +1189,7 @@ class LibraryApp:
             return
 
         try:
-            book = self.katalog.buch(isbn)
+            book = self.bibliothek.buch(isbn)
         except Exception as error:
             messagebox.showerror(
                 "Exemplare konnten nicht geladen werden",
@@ -1355,7 +1354,7 @@ class LibraryApp:
             return
 
         try:
-            delete_book(isbn)
+            self.bibliothek.buch_entfernen(isbn)
         except Exception as error:
             messagebox.showerror(
                 "Löschen fehlgeschlagen",
@@ -1470,12 +1469,12 @@ class LibraryApp:
             if not dialog.winfo_exists():
                 return
             dialog.destroy()
-            self.isbn_var.set(metadata["isbn"])
+            self.isbn_var.set(metadata.isbn)
             self.run_search()
-            self.status_var.set(f'"{metadata["title"]}" wurde hinzugefügt')
+            self.status_var.set(f'"{metadata.title}" wurde hinzugefügt')
             messagebox.showinfo(
                 "Buch hinzugefügt",
-                f'"{metadata["title"]}" wurde erfolgreich gespeichert.',
+                f'"{metadata.title}" wurde erfolgreich gespeichert.',
                 parent=self.root,
             )
 
@@ -1503,7 +1502,7 @@ class LibraryApp:
 
             def worker() -> None:
                 try:
-                    result_queue.put(add_book(isbn, copy_count))
+                    result_queue.put(self.bibliothek.buch_aufnehmen(isbn, copy_count))
                 except Exception as error:
                     result_queue.put(error)
 
@@ -1530,8 +1529,8 @@ class LibraryApp:
         isbn_entry.focus_set()
 
 
-def main():
-    """Startet das Hauptfenster und die Tkinter-Ereignisschleife."""
+def run(bibliothek: Bibliothekszugang) -> None:
+    """Startet das Hauptfenster mit einem konfigurierten Bibliothekszugang."""
 
     _set_windows_app_id()
 
@@ -1539,15 +1538,8 @@ def main():
     root = tk.Tk(className="Bibliothekskatalog")
 
     # Die Klasse baut alle Inhalte in dieses Fenster ein.
-    LibraryApp(root)
+    LibraryApp(root, bibliothek)
 
     # ``mainloop`` wartet auf Ereignisse wie Klicks, Tastatureingaben oder
     # Fensteränderungen. Ohne diese Schleife würde das Programm sofort enden.
     root.mainloop()
-
-
-# Dieser Schutz sorgt dafür, dass ``main`` nur beim direkten Start von gui.py
-# ausgeführt wird. Beim Import in einem Test wird nicht automatisch ein Fenster
-# geöffnet. ``__name__`` ist beim direkten Start genau "__main__".
-if __name__ == "__main__":
-    main()

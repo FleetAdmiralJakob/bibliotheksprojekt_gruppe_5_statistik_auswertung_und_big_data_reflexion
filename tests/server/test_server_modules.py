@@ -5,14 +5,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import bibliothek
-from database import Bibliotheksbestand
-from domain_values import (
+from src.server import buchlebenszyklus
+from src.server.bestand import Bibliotheksbestand
+from src.server.buchlebenszyklus import Buchlebenszyklus
+from src.shared.domain_values import (
     DEFAULT_COPY_AVAILABILITY,
     DEFAULT_COPY_STATE,
     Kategorie,
 )
-from models import BookMetadata
+from src.shared.models import BookMetadata
 
 
 class IsbnTests(unittest.TestCase):
@@ -22,16 +23,19 @@ class IsbnTests(unittest.TestCase):
         """Trennzeichen werden entfernt, gültige Prüfziffern bleiben erhalten."""
 
         self.assertEqual(
-            bibliothek.normalize_isbn("978-3-596-18094-3"),
+            buchlebenszyklus.normalize_isbn("978-3-596-18094-3"),
             "9783596180943",
         )
-        self.assertEqual(bibliothek.normalize_isbn("0-306-40615-2"), "0306406152")
+        self.assertEqual(
+            buchlebenszyklus.normalize_isbn("0-306-40615-2"),
+            "0306406152",
+        )
 
     def test_rejects_invalid_isbn(self):
         """Eine falsche Prüfziffer wird als ungültige ISBN gemeldet."""
 
         with self.assertRaises(ValueError):
-            bibliothek.normalize_isbn("9783596180944")
+            buchlebenszyklus.normalize_isbn("9783596180944")
 
 
 class CategoryClassificationTests(unittest.TestCase):
@@ -40,7 +44,9 @@ class CategoryClassificationTests(unittest.TestCase):
     def test_uses_category_priority_for_overlapping_subjects(self):
         """Technik bleibt bei einem zugleich wissenschaftlichen Thema vorrangig."""
 
-        category = bibliothek._category_from_subjects([{"name": "Computer Science"}])
+        category = buchlebenszyklus._category_from_subjects(
+            [{"name": "Computer Science"}]
+        )
 
         self.assertEqual(category, Kategorie.TECHNOLOGIE)
 
@@ -68,16 +74,16 @@ class BibliotheksbestandTests(unittest.TestCase):
     def metadata() -> BookMetadata:
         """Liefert vollständige, gültige Metadaten für Bestandsoperationen."""
 
-        return {
-            "isbn": "9780306406157",
-            "title": "Test Book",
-            "authors": ["Ada Example", "Max Example"],
-            "publisher": "Test Publisher",
-            "release_date": "2026",
-            "page_count": 240,
-            "language": "Englisch",
-            "main_category": Kategorie.WISSENSCHAFT,
-        }
+        return BookMetadata(
+            isbn="9780306406157",
+            title="Test Book",
+            authors=("Ada Example", "Max Example"),
+            publisher="Test Publisher",
+            release_date="2026",
+            page_count=240,
+            language="Englisch",
+            main_category=Kategorie.WISSENSCHAFT,
+        )
 
     def test_adds_and_reads_book_through_the_interface(self):
         """Buch, Beziehungen und Exemplare sind über Fachwerte beobachtbar."""
@@ -144,7 +150,7 @@ class BibliotheksbestandTests(unittest.TestCase):
             self.bestand.get_book_copies("9780306406157")
 
 
-class AddBookTests(unittest.TestCase):
+class BuchlebenszyklusTests(unittest.TestCase):
     """Prüft Buchaufnahme mit externer Metadatenquelle und tiefem Bestand."""
 
     def setUp(self):
@@ -155,34 +161,39 @@ class AddBookTests(unittest.TestCase):
 
         self.bestand = Bibliotheksbestand(database_path=self.database_path)
         self.bestand.recreate()
-
-        # Nur das Standardobjekt am Modulrand wird ersetzt. SQL, Cursor und
-        # Datenbankpfade bleiben hinter dem Interface des Bestands verborgen.
-        self.bestand_patch = patch.object(bibliothek, "_BESTAND", self.bestand)
-        self.bestand_patch.start()
+        self.lebenszyklus = Buchlebenszyklus(self.bestand)
 
     def tearDown(self):
-        """Stellt die Standardverdrahtung wieder her und entfernt Testdaten."""
+        """Entfernt die temporären Bestandsdaten."""
 
-        self.bestand_patch.stop()
         self.database_path.unlink(missing_ok=True)
 
-    @patch("bibliothek.fetch_book_metadata")
+    @patch("src.server.buchlebenszyklus.fetch_book_metadata")
     def test_adds_metadata_and_requested_copies(self, fetch_metadata):
         """Buchaufnahme reicht geprüfte Metadaten atomar an den Bestand weiter."""
 
         fetch_metadata.return_value = BibliotheksbestandTests.metadata()
 
-        metadata = bibliothek.add_book("978-0-306-40615-7", 3)
+        metadata = self.lebenszyklus.aufnehmen("978-0-306-40615-7", 3)
 
         # Beobachtungen laufen über dasselbe Bestandsinterface wie in der
         # Anwendung. Der Test greift nicht hinter den Seam auf Tabellen zu.
-        results = self.bestand.search_books("", "", "", metadata["isbn"])
-        copies = self.bestand.get_book_copies(metadata["isbn"])
+        results = self.bestand.search_books("", "", "", metadata.isbn)
+        copies = self.bestand.get_book_copies(metadata.isbn)
 
         self.assertEqual(results[0].title, "Test Book")
         self.assertEqual(results[0].authors, "Ada Example, Max Example")
         self.assertEqual(len(copies), 3)
+
+    def test_removes_book_from_the_same_inventory(self):
+        """Aufnahme und Entfernung verwenden denselben Bibliotheksbestand."""
+
+        self.bestand.add_book(BibliotheksbestandTests.metadata(), 1)
+
+        isbn = self.lebenszyklus.entfernen("978-0-306-40615-7")
+
+        self.assertEqual(isbn, "9780306406157")
+        self.assertEqual(self.bestand.search_books("", "", "", ""), [])
 
 
 if __name__ == "__main__":

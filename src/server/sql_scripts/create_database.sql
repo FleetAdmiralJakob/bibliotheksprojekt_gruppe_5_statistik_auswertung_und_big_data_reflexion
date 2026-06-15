@@ -1,4 +1,4 @@
--- Value placeholders are rendered from domain_values.py before execution.
+-- Value placeholders are rendered from shared/domain_values.py before execution.
 
 DROP TABLE IF EXISTS borrowings;
 DROP TABLE IF EXISTS book_authors;

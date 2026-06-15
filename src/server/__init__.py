@@ -1,0 +1,1 @@
+"""Serverseitige Implementierung der Bibliotheksanwendung."""

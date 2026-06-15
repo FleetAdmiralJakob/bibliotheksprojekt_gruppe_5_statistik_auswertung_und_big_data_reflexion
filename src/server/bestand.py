@@ -12,20 +12,21 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from domain_values import (
+from src.server.models import BookCopy, BookSearchResult
+from src.shared.domain_values import (
     DEFAULT_COPY_AVAILABILITY,
     DEFAULT_COPY_STATE,
     render_schema_value_lists,
 )
-from models import BookCopy, BookMetadata, BookSearchResult
+from src.shared.models import BookMetadata
 
 type QueryParameters = tuple[object, ...]
 
 # Der Standardpfad wird relativ zu dieser Datei bestimmt. Dadurch hängt die
 # Anwendung nicht vom aktuellen Arbeitsordner des gestarteten Prozesses ab.
-BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "bibliothek.db"
-SCHEMA_PATH = BASE_DIR / "sql_scripts" / "create_database.sql"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATABASE_PATH = PROJECT_ROOT / "bibliothek.db"
+SCHEMA_PATH = Path(__file__).resolve().parent / "sql_scripts" / "create_database.sql"
 
 
 class Bibliotheksbestand:
@@ -176,7 +177,7 @@ class Bibliotheksbestand:
         if copy_count < 1 or copy_count > 999:
             raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
 
-        isbn = metadata["isbn"]
+        isbn = metadata.isbn
 
         def insert_book(cursor: sqlite3.Cursor) -> None:
             # Die Duplikatprüfung liegt innerhalb derselben Transaktion wie das
@@ -193,7 +194,7 @@ class Bibliotheksbestand:
                 table="publishers",
                 id_column="publisher_id",
                 prefix="PUB",
-                name=metadata["publisher"],
+                name=metadata.publisher,
             )
 
             # Der Bucheintrag referenziert den gefundenen oder neu angelegten
@@ -207,18 +208,18 @@ class Bibliotheksbestand:
                 """,
                 (
                     isbn,
-                    metadata["title"],
-                    metadata["main_category"],
-                    metadata["language"],
+                    metadata.title,
+                    metadata.main_category,
+                    metadata.language,
                     publisher_id,
-                    metadata["release_date"],
-                    metadata["page_count"],
+                    metadata.release_date,
+                    metadata.page_count,
                 ),
             )
 
             # ``dict.fromkeys`` entfernt doppelte Autorennamen, behält aber ihre
             # Reihenfolge aus den Metadaten bei.
-            for author_name in dict.fromkeys(metadata["authors"]):
+            for author_name in dict.fromkeys(metadata.authors):
                 author_id = self._find_or_create_named_record(
                     cursor=cursor,
                     table="authors",

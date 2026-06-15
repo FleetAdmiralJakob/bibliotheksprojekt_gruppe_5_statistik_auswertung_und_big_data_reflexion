@@ -2,7 +2,7 @@
 
 import unittest
 
-from domain_values import (
+from src.shared.domain_values import (
     DEFAULT_COPY_AVAILABILITY,
     DEFAULT_COPY_STATE,
     Exemplarverfuegbarkeit,

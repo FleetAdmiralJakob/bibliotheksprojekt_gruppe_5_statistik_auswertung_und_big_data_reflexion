@@ -1,0 +1,1 @@
+"""Desktop-Client der Bibliotheksanwendung."""

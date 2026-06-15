@@ -6,20 +6,20 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from database import Bibliotheksbestand
-from domain_values import (
-    Exemplarverfuegbarkeit,
-    Exemplarzustand,
-    Kategorie,
-)
-from katalogansicht import (
+from src.server.bestand import Bibliotheksbestand
+from src.server.katalogansicht import Katalogansicht
+from src.shared.catalog import (
     BuchNichtGefunden,
-    Katalogansicht,
     Katalogsuche,
     Sortierfeld,
     Sortierung,
 )
-from models import BookMetadata
+from src.shared.domain_values import (
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
+    Kategorie,
+)
+from src.shared.models import BookMetadata
 
 
 class KatalogansichtTests(unittest.TestCase):
@@ -50,16 +50,16 @@ class KatalogansichtTests(unittest.TestCase):
     ) -> BookMetadata:
         """Erstellt vollständige Metadaten mit gezielt variierbaren Werten."""
 
-        return {
-            "isbn": isbn,
-            "title": title,
-            "authors": [f"Autor {title}"],
-            "publisher": "Testverlag",
-            "release_date": release_date,
-            "page_count": 200,
-            "language": "Deutsch",
-            "main_category": category,
-        }
+        return BookMetadata(
+            isbn=isbn,
+            title=title,
+            authors=(f"Autor {title}",),
+            publisher="Testverlag",
+            release_date=release_date,
+            page_count=200,
+            language="Deutsch",
+            main_category=category,
+        )
 
     def test_translates_category_and_formats_date(self):
         """Gespeicherte Werte verlassen den Seam als sichtbare Fachwerte."""
@@ -113,13 +113,13 @@ class KatalogansichtTests(unittest.TestCase):
 
         ascending = self.katalog.suchen(
             Katalogsuche(
-                sortierung=Sortierung(Sortierfeld.ERSCHEINUNG),
+                sortierung=Sortierung(feld=Sortierfeld.ERSCHEINUNG),
             )
         )
         descending = self.katalog.suchen(
             Katalogsuche(
                 sortierung=Sortierung(
-                    Sortierfeld.ERSCHEINUNG,
+                    feld=Sortierfeld.ERSCHEINUNG,
                     absteigend=True,
                 ),
             )
@@ -142,7 +142,7 @@ class KatalogansichtTests(unittest.TestCase):
 
         page = self.katalog.suchen(
             Katalogsuche(
-                sortierung=Sortierung(Sortierfeld.EXEMPLARE),
+                sortierung=Sortierung(feld=Sortierfeld.EXEMPLARE),
             )
         )
 

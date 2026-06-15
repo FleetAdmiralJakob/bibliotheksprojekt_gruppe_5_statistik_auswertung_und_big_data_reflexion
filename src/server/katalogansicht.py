@@ -8,101 +8,27 @@ stabile Identität eines Buches.
 """
 
 from collections import Counter
-from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
-from database import Bibliotheksbestand
-from domain_values import (
-    Kategorie,
-    Verfuegbarkeitsklasse,
+from src.server.bestand import Bibliotheksbestand
+from src.server.models import BookCopy, BookSearchResult
+from src.shared.catalog import (
+    Buchansicht,
+    BuchNichtGefunden,
+    Exemplarzeile,
+    KatalogansichtFehler,
+    Katalogseite,
+    Katalogsuche,
+    Katalogzeile,
+    Sortierfeld,
+    Sortierung,
+)
+from src.shared.domain_values import (
     availability_presentation,
     category_label,
     copy_state_label,
 )
-from models import BookCopy, BookSearchResult
-
-
-class Sortierfeld(StrEnum):
-    """Fachlich sortierbare Spalten der Katalogansicht."""
-
-    ISBN = "isbn"
-    TITEL = "title"
-    AUTOR = "author"
-    KATEGORIE = "category"
-    SPRACHE = "language"
-    ERSCHEINUNG = "year"
-    EXEMPLARE = "copies"
-
-
-@dataclass(frozen=True, slots=True)
-class Sortierung:
-    """Gewähltes Sortierfeld und seine Richtung."""
-
-    feld: Sortierfeld
-    absteigend: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class Katalogsuche:
-    """Alle Filter und die optionale Sortierung einer Katalogabfrage."""
-
-    titel: str = ""
-    autor: str = ""
-    kategorie: Kategorie | None = None
-    isbn: str = ""
-    sortierung: Sortierung | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Katalogzeile:
-    """Fertig aufbereitete Zeile der Buchergebnisliste."""
-
-    isbn: str
-    titel: str
-    autoren: str
-    kategorie: str
-    sprache: str
-    erscheinung: str
-    exemplarzahl: int
-
-
-@dataclass(frozen=True, slots=True)
-class Katalogseite:
-    """Ergebnis einer Suche mit Zeilen und passendem Statustext."""
-
-    zeilen: tuple[Katalogzeile, ...]
-    status: str
-
-
-@dataclass(frozen=True, slots=True)
-class Exemplarzeile:
-    """Aufbereitetes Exemplar für die Detailansicht."""
-
-    exemplar_id: str
-    zustand: str
-    verfuegbarkeit: str
-    klasse: Verfuegbarkeitsklasse
-
-
-@dataclass(frozen=True, slots=True)
-class Buchansicht:
-    """Vollständige Katalogansicht eines Buches und seiner Exemplare."""
-
-    isbn: str
-    titel: str
-    metadatenzeile: str
-    exemplarzusammenfassung: str
-    exemplare: tuple[Exemplarzeile, ...]
-
-
-class KatalogansichtFehler(RuntimeError):
-    """Stabiler Fehlertyp für nicht lesbare Katalogdaten."""
-
-
-class BuchNichtGefunden(KatalogansichtFehler):
-    """Das angeforderte Buch ist im Bibliotheksbestand nicht vorhanden."""
 
 
 class Katalogansicht:

@@ -13,9 +13,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from database import Bibliotheksbestand
-from domain_values import Kategorie
-from models import BookMetadata
+from src.server.bestand import Bibliotheksbestand
+from src.shared.domain_values import Kategorie
+from src.shared.models import BookMetadata
 
 type JsonObject = dict[str, Any]
 
@@ -30,11 +30,6 @@ LANGUAGES = {
     "en": "Englisch",
     "eng": "Englisch",
 }
-
-# Die laufende Anwendung verwendet genau einen Bestand. Tests ersetzen dieses
-# Objekt durch einen Bestand mit temporärer SQLite-Datei, ohne Pfadkonstanten
-# oder interne Datenbankfunktionen zu verändern.
-_BESTAND = Bibliotheksbestand()
 
 
 def normalize_isbn(value: str) -> str:
@@ -130,47 +125,58 @@ def fetch_book_metadata(isbn: str) -> BookMetadata:
     if not isinstance(page_count, int) or page_count <= 0:
         raise ValueError("Die Buch-API liefert keine gültige Seitenzahl.")
 
-    return {
-        "isbn": isbn,
-        "title": book["title"].strip(),
-        "authors": authors,
-        "publisher": publishers[0] if publishers else "",
-        "release_date": str(book.get("publish_date", "")).strip(),
-        "page_count": page_count,
-        "language": _language_from_edition(edition),
-        "main_category": _category_from_subjects(book.get("subjects", [])),
-    }
+    return BookMetadata(
+        isbn=isbn,
+        title=book["title"].strip(),
+        authors=tuple(authors),
+        publisher=publishers[0] if publishers else "",
+        release_date=str(book.get("publish_date", "")).strip(),
+        page_count=page_count,
+        language=_language_from_edition(edition),
+        main_category=_category_from_subjects(book.get("subjects", [])),
+    )
 
 
-def delete_book(isbn_value: str) -> str:
-    """Löscht ein Buch mit seinen zugehörigen Autoren-Zuordnungen und Exemplaren."""
+class Buchlebenszyklus:
+    """Prüft und koordiniert Aufnahme und Entfernung eines Buches."""
 
-    isbn = normalize_isbn(isbn_value)
+    def __init__(self, bestand: Bibliotheksbestand) -> None:
+        """Verbindet den Buchlebenszyklus mit genau einem Bibliotheksbestand."""
 
-    # Existenzprüfung, Löschreihenfolge und Transaktion gehören zum
-    # Bibliotheksbestand und werden nicht über dieses Interface offengelegt.
-    _BESTAND.delete_book(isbn)
-    return isbn
+        self._bestand = bestand
 
+    def entfernen(self, isbn_value: str) -> str:
+        """Löscht ein Buch mit seinen Autoren-Zuordnungen und Exemplaren."""
 
-def add_book(isbn_value: str, copy_count: int | str) -> BookMetadata:
-    """Lädt Metadaten und speichert ein neues Buch mit seinen Exemplaren."""
+        isbn = normalize_isbn(isbn_value)
 
-    isbn = normalize_isbn(isbn_value)
-    try:
-        copy_count = int(copy_count)
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            "Die Anzahl der Exemplare muss eine ganze Zahl sein."
-        ) from error
-    if copy_count < 1 or copy_count > 999:
-        raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
+        # Existenzprüfung, Löschreihenfolge und Transaktion gehören zum
+        # Bibliotheksbestand und werden nicht über dieses Interface offengelegt.
+        self._bestand.delete_book(isbn)
+        return isbn
 
-    # Open Library bleibt außerhalb des Bestandsmoduls, weil es eine echte
-    # externe Abhängigkeit mit eigenen Fehlerarten und Datenformaten ist.
-    metadata = fetch_book_metadata(isbn)
+    def aufnehmen(
+        self,
+        isbn_value: str,
+        copy_count: int | str,
+    ) -> BookMetadata:
+        """Lädt Metadaten und speichert ein neues Buch mit seinen Exemplaren."""
 
-    # Das Bestandsmodul besitzt die Persistenzinvarianten für Buch, Autoren,
-    # Verlag und Exemplare und bestätigt die Änderung atomar.
-    _BESTAND.add_book(metadata, copy_count)
-    return metadata
+        isbn = normalize_isbn(isbn_value)
+        try:
+            copy_count = int(copy_count)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Die Anzahl der Exemplare muss eine ganze Zahl sein."
+            ) from error
+        if copy_count < 1 or copy_count > 999:
+            raise ValueError("Die Anzahl der Exemplare muss zwischen 1 und 999 liegen.")
+
+        # Open Library bleibt vorerst in der Implementierung des
+        # Buchlebenszyklus. Ein eigener Adapter ist eine separate Vertiefung.
+        metadata = fetch_book_metadata(isbn)
+
+        # Das Bestandsmodul besitzt die Persistenzinvarianten für Buch, Autoren,
+        # Verlag und Exemplare und bestätigt die Änderung atomar.
+        self._bestand.add_book(metadata, copy_count)
+        return metadata

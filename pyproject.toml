@@ -1,10 +1,15 @@
 [project]
 name = "bibliotheksprojekt-gruppe-5-statistik-auswertung-und-big-data-reflexion"
 version = "0.1.0"
-description = "Desktop-Anwendung zur Verwaltung und Auswertung eines Bibliotheksbestands"
+description = "Client-Server-Anwendung zur Verwaltung eines Bibliotheksbestands"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi>=0.137.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+    "uvicorn>=0.49.0",
+]
 
 [dependency-groups]
 dev = [
