@@ -11,11 +11,13 @@ from src.shared.catalog import (
     Katalogseite,
     Katalogsuche,
 )
+from src.shared.domain_values import Exemplarverfuegbarkeit, Exemplarzustand
 from src.shared.http_models import (
     BuchaufnahmeRequest,
     BuchentfernungResponse,
     ErrorResponse,
     ExemplaraufnahmeRequest,
+    ExemplarstatusAenderungRequest,
     HealthResponse,
 )
 from src.shared.models import BookMetadata
@@ -84,6 +86,28 @@ class HttpBibliothekszugang:
             f"/v1/buecher/{quote(isbn, safe='')}/exemplare",
             Buchansicht,
             payload=ExemplaraufnahmeRequest(exemplaranzahl=exemplaranzahl),
+        )
+
+    def exemplarstatus_aendern(
+        self,
+        isbn: str,
+        exemplar_id: str,
+        zustand: Exemplarzustand,
+        verfuegbarkeit: Exemplarverfuegbarkeit,
+    ) -> Buchansicht:
+        """Ändert Zustand und Verfügbarkeit eines Exemplars über den Server."""
+
+        return self._request(
+            "PATCH",
+            (
+                f"/v1/buecher/{quote(isbn, safe='')}/exemplare/"
+                f"{quote(exemplar_id, safe='')}"
+            ),
+            Buchansicht,
+            payload=ExemplarstatusAenderungRequest(
+                zustand=zustand,
+                verfuegbarkeit=verfuegbarkeit,
+            ),
         )
 
     def buch_entfernen(self, isbn: str) -> str:

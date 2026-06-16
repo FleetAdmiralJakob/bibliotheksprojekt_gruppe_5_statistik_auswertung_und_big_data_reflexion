@@ -17,6 +17,7 @@ from src.shared.http_models import (
     BuchentfernungResponse,
     ErrorResponse,
     ExemplaraufnahmeRequest,
+    ExemplarstatusAenderungRequest,
     HealthResponse,
 )
 from src.shared.models import BookMetadata
@@ -85,6 +86,19 @@ def create_app(backend: Bibliotheksbackend) -> FastAPI:
         request: ExemplaraufnahmeRequest,
     ) -> Buchansicht:
         return backend.exemplare_hinzufuegen(isbn, request.exemplaranzahl)
+
+    @app.patch("/v1/buecher/{isbn}/exemplare/{exemplar_id}")
+    def update_book_copy_status(
+        isbn: str,
+        exemplar_id: str,
+        request: ExemplarstatusAenderungRequest,
+    ) -> Buchansicht:
+        return backend.exemplarstatus_aendern(
+            isbn,
+            exemplar_id,
+            request.zustand,
+            request.verfuegbarkeit,
+        )
 
     @app.delete("/v1/buecher/{isbn}")
     def delete_book(isbn: str) -> BuchentfernungResponse:

@@ -8,6 +8,7 @@ from src.shared.catalog import (
     Katalogseite,
     Katalogsuche,
 )
+from src.shared.domain_values import Exemplarverfuegbarkeit, Exemplarzustand
 from src.shared.models import BookMetadata
 
 
@@ -49,6 +50,23 @@ class Bibliotheksbackend:
         normalized_isbn = self._buchlebenszyklus.exemplare_hinzufuegen(
             isbn,
             exemplaranzahl,
+        )
+        return self._katalog.buch(normalized_isbn)
+
+    def exemplarstatus_aendern(
+        self,
+        isbn: str,
+        exemplar_id: str,
+        zustand: Exemplarzustand,
+        verfuegbarkeit: Exemplarverfuegbarkeit,
+    ) -> Buchansicht:
+        """Ändert Zustand und Verfügbarkeit eines vorhandenen Exemplars."""
+
+        normalized_isbn = self._buchlebenszyklus.exemplarstatus_aendern(
+            isbn,
+            exemplar_id,
+            zustand,
+            verfuegbarkeit,
         )
         return self._katalog.buch(normalized_isbn)
 

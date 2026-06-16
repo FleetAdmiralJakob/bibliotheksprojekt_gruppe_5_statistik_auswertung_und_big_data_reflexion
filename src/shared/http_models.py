@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, ConfigDict
 
+from src.shared.domain_values import Exemplarverfuegbarkeit, Exemplarzustand
+
 
 class HttpModel(BaseModel):
     """Unveränderliches, strikt benanntes Modell am HTTP-Seam."""
@@ -20,6 +22,13 @@ class ExemplaraufnahmeRequest(HttpModel):
     """Eingabe für neue Exemplare eines vorhandenen Buches."""
 
     exemplaranzahl: int | str
+
+
+class ExemplarstatusAenderungRequest(HttpModel):
+    """Eingabe für Zustand und Verfügbarkeit eines vorhandenen Exemplars."""
+
+    zustand: Exemplarzustand
+    verfuegbarkeit: Exemplarverfuegbarkeit
 
 
 class BuchentfernungResponse(HttpModel):

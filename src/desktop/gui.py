@@ -30,6 +30,8 @@ from src.shared.catalog import (
     Sortierung,
 )
 from src.shared.domain_values import (
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
     Kategorie,
     Verfuegbarkeitsklasse,
 )
@@ -49,6 +51,12 @@ WINDOW_ICON_SIZES = (256, 64, 32, 16)
 # Diese Auswahl bedeutet bewusst keinen Kategorie-Filter. Alle konkreten
 # Kategorien und ihre Übersetzung besitzt das Katalogansicht-Interface.
 ALL_CATEGORIES_LABEL = "Alle Kategorien"
+COPY_STATE_BY_LABEL = {state.label: state for state in Exemplarzustand}
+COPY_AVAILABILITY_BY_LABEL = {
+    availability.label: availability for availability in Exemplarverfuegbarkeit
+}
+COPY_STATE_LABELS = tuple(COPY_STATE_BY_LABEL)
+COPY_AVAILABILITY_LABELS = tuple(COPY_AVAILABILITY_BY_LABEL)
 
 # -----------------------------------------------------------------------------
 # Design System
@@ -1291,6 +1299,46 @@ class LibraryApp:
                 foreground=foreground,
             )
 
+        def selected_copy_values() -> tuple[str, str, str] | None:
+            selection = copy_table.selection()
+            if not selection:
+                return None
+
+            values = copy_table.item(selection[0], "values")
+            if len(values) < 3 or not values[0]:
+                return None
+            return str(values[0]), str(values[1]), str(values[2])
+
+        def update_edit_button(_event: tk.Event | None = None) -> None:
+            edit_copy_btn.set_enabled(selected_copy_values() is not None)
+
+        def open_selected_copy_editor() -> None:
+            selected_copy = selected_copy_values()
+            if selected_copy is None:
+                return
+
+            copy_id, state_label, availability_label = selected_copy
+            self.open_edit_copy_dialog(
+                parent=detail,
+                isbn=book.isbn,
+                exemplar_id=copy_id,
+                current_state_label=state_label,
+                current_availability_label=availability_label,
+                on_success=render_copies,
+            )
+
+        def open_copy_editor_from_event(event: tk.Event) -> None:
+            if copy_table.identify_region(event.x, event.y) != "cell":
+                return
+
+            item = copy_table.identify_row(event.y)
+            if not item:
+                return
+
+            copy_table.selection_set(item)
+            copy_table.focus(item)
+            open_selected_copy_editor()
+
         def render_copies(updated_book: Buchansicht) -> None:
             """Aktualisiert Zusammenfassung und Tabelle nach einer Änderung."""
 
@@ -1303,6 +1351,7 @@ class LibraryApp:
                     copy_table.insert(
                         "",
                         "end",
+                        iid=copy.exemplar_id,
                         values=(
                             copy.exemplar_id,
                             copy.zustand,
@@ -1310,15 +1359,26 @@ class LibraryApp:
                         ),
                         tags=(copy.klasse.value,),
                     )
+                update_edit_button()
                 return
 
             copy_table.insert(
                 "",
                 "end",
+                iid="__no_copies__",
                 values=("", "Keine Exemplare gespeichert", ""),
                 tags=(Verfuegbarkeitsklasse.UNBEKANNT.value,),
             )
+            update_edit_button()
 
+        edit_copy_btn = ActionButton(
+            copies_header,
+            text="Status ändern",
+            command=open_selected_copy_editor,
+            variant="secondary",
+        )
+        edit_copy_btn.grid(row=0, column=1, sticky="e", padx=(0, 10))
+        edit_copy_btn.set_enabled(False)
         add_copy_btn = ActionButton(
             copies_header,
             text="Exemplar hinzufügen",
@@ -1329,7 +1389,7 @@ class LibraryApp:
                 on_success=render_copies,
             ),
         )
-        add_copy_btn.grid(row=0, column=1, sticky="e")
+        add_copy_btn.grid(row=0, column=2, sticky="e")
 
         scrollbar = ttk.Scrollbar(
             copies_table_frame, orient="vertical", command=copy_table.yview
@@ -1337,9 +1397,199 @@ class LibraryApp:
         copy_table.configure(yscrollcommand=scrollbar.set)
         copy_table.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
+        copy_table.bind("<<TreeviewSelect>>", update_edit_button)
+        copy_table.bind("<Double-1>", open_copy_editor_from_event)
         render_copies(book)
 
         self.status_var.set(f'Exemplare von "{book.titel}" geöffnet')
+
+    def open_edit_copy_dialog(
+        self,
+        *,
+        parent: tk.Toplevel,
+        isbn: str,
+        exemplar_id: str,
+        current_state_label: str,
+        current_availability_label: str,
+        on_success: Callable[[Buchansicht], None],
+    ) -> None:
+        """Öffnet ein Formular für Zustand und Verfügbarkeit eines Exemplars."""
+
+        dialog = tk.Toplevel(parent)
+        self._apply_window_icon(dialog)
+        dialog.title("Exemplar bearbeiten")
+        dialog.resizable(False, False)
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        state_var = tk.StringVar(
+            value=(
+                current_state_label
+                if current_state_label in COPY_STATE_BY_LABEL
+                else COPY_STATE_LABELS[0]
+            )
+        )
+        availability_var = tk.StringVar(
+            value=(
+                current_availability_label
+                if current_availability_label in COPY_AVAILABILITY_BY_LABEL
+                else COPY_AVAILABILITY_LABELS[0]
+            )
+        )
+        dialog_status = tk.StringVar(value=f'Exemplar "{exemplar_id}" bearbeiten.')
+
+        card = RoundedFrame(
+            dialog,
+            radius=24,
+            bg=COLORS["surface"],
+            bordercolor=COLORS["border"],
+            padding=(24, 24),
+        )
+        card.pack(fill="both", expand=True)
+        card.inner_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            card.inner_frame,
+            text="Exemplar bearbeiten",
+            style="Section.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 18))
+        ttk.Label(
+            card.inner_frame,
+            text="ZUSTAND",
+            style="Field.TLabel",
+        ).grid(row=1, column=0, sticky="w")
+        state = ttk.Combobox(
+            card.inner_frame,
+            textvariable=state_var,
+            values=COPY_STATE_LABELS,
+            state="readonly",
+            width=28,
+        )
+        state.grid(row=2, column=0, sticky="ew", pady=(6, 14))
+
+        ttk.Label(
+            card.inner_frame,
+            text="VERFÜGBARKEIT",
+            style="Field.TLabel",
+        ).grid(row=3, column=0, sticky="w")
+        availability = ttk.Combobox(
+            card.inner_frame,
+            textvariable=availability_var,
+            values=COPY_AVAILABILITY_LABELS,
+            state="readonly",
+            width=28,
+        )
+        availability.grid(row=4, column=0, sticky="ew", pady=(6, 14))
+
+        ttk.Label(
+            card.inner_frame,
+            textvariable=dialog_status,
+            style="Field.TLabel",
+            wraplength=360,
+        ).grid(row=5, column=0, sticky="w")
+
+        actions = ttk.Frame(card.inner_frame, style="Card.TFrame")
+        actions.grid(row=6, column=0, sticky="e", pady=(22, 0))
+        cancel_btn = ActionButton(
+            actions,
+            text="Abbrechen",
+            command=dialog.destroy,
+            variant="secondary",
+        )
+        cancel_btn.pack(side="left", padx=(0, 10))
+        save_btn = ActionButton(
+            actions,
+            text="Speichern",
+            variant="primary",
+        )
+        save_btn.pack(side="left")
+        submitting = False
+
+        def selected_status() -> tuple[Exemplarzustand, Exemplarverfuegbarkeit]:
+            try:
+                selected_state = COPY_STATE_BY_LABEL[state_var.get()]
+                selected_availability = COPY_AVAILABILITY_BY_LABEL[
+                    availability_var.get()
+                ]
+            except KeyError as error:
+                raise ValueError(
+                    "Bitte einen gültigen Zustand und eine gültige Verfügbarkeit wählen."
+                ) from error
+            return selected_state, selected_availability
+
+        def finish_success(updated_book: Buchansicht) -> None:
+            if not dialog.winfo_exists():
+                return
+            dialog.destroy()
+            on_success(updated_book)
+            self.status_var.set(f'Exemplar "{exemplar_id}" wurde aktualisiert')
+            messagebox.showinfo(
+                "Exemplar aktualisiert",
+                "Zustand und Verfügbarkeit wurden gespeichert.",
+                parent=parent,
+            )
+
+        def finish_error(error: Exception) -> None:
+            nonlocal submitting
+            if not dialog.winfo_exists():
+                return
+            submitting = False
+            save_btn.set_enabled(True)
+            cancel_btn.set_enabled(True)
+            dialog_status.set("Das Exemplar konnte nicht aktualisiert werden.")
+            messagebox.showerror("Speichern fehlgeschlagen", str(error), parent=dialog)
+
+        def submit() -> None:
+            nonlocal submitting
+            if submitting:
+                return
+
+            try:
+                selected_state, selected_availability = selected_status()
+            except ValueError as error:
+                dialog_status.set(str(error))
+                return
+
+            submitting = True
+            save_btn.set_enabled(False)
+            cancel_btn.set_enabled(False)
+            dialog_status.set("Exemplar wird gespeichert ...")
+            result_queue: Queue[Buchansicht | Exception] = Queue()
+
+            def worker() -> None:
+                try:
+                    result_queue.put(
+                        self.bibliothek.exemplarstatus_aendern(
+                            isbn,
+                            exemplar_id,
+                            selected_state,
+                            selected_availability,
+                        )
+                    )
+                except Exception as error:
+                    result_queue.put(error)
+
+            Thread(target=worker, daemon=True).start()
+
+            def poll_result() -> None:
+                try:
+                    result = result_queue.get_nowait()
+                except Empty:
+                    if dialog.winfo_exists():
+                        self.root.after(50, poll_result)
+                    return
+
+                if isinstance(result, Exception):
+                    finish_error(result)
+                else:
+                    finish_success(result)
+
+            self.root.after(50, poll_result)
+
+        save_btn.set_command(submit)
+        dialog.bind("<Return>", lambda _event: submit())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        state.focus_set()
 
     def open_add_copies_dialog(
         self,

@@ -16,6 +16,8 @@ from src.server.models import BookCopy, BookSearchResult
 from src.shared.domain_values import (
     DEFAULT_COPY_AVAILABILITY,
     DEFAULT_COPY_STATE,
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
     render_schema_value_lists,
 )
 from src.shared.models import BookMetadata
@@ -300,6 +302,56 @@ class Bibliotheksbestand:
             )
 
         self._run_transaction(insert_copies)
+
+    def update_book_copy(
+        self,
+        isbn: str,
+        copy_id: str,
+        state: Exemplarzustand | str,
+        availability: Exemplarverfuegbarkeit | str,
+    ) -> None:
+        """Ändert Zustand und Verfügbarkeit eines vorhandenen Exemplars."""
+
+        try:
+            normalized_state = Exemplarzustand(state)
+        except ValueError as error:
+            raise ValueError("Der Zustand des Exemplars ist ungültig.") from error
+
+        try:
+            normalized_availability = Exemplarverfuegbarkeit(availability)
+        except ValueError as error:
+            raise ValueError(
+                "Die Verfügbarkeit des Exemplars ist ungültig."
+            ) from error
+
+        copy_id = copy_id.strip()
+        if not copy_id:
+            raise ValueError("Die Exemplar-ID darf nicht leer sein.")
+
+        def update_copy(cursor: sqlite3.Cursor) -> None:
+            if not cursor.execute(
+                "SELECT 1 FROM books WHERE isbn = ?",
+                (isbn,),
+            ).fetchone():
+                raise ValueError("Ein Buch mit dieser ISBN ist nicht vorhanden.")
+
+            result = cursor.execute(
+                """
+                UPDATE book_copies
+                SET state = ?, availability = ?
+                WHERE isbn = ? AND copy_id = ?
+                """,
+                (
+                    normalized_state.value,
+                    normalized_availability.value,
+                    isbn,
+                    copy_id,
+                ),
+            )
+            if result.rowcount == 0:
+                raise ValueError("Ein Exemplar mit dieser ID ist nicht vorhanden.")
+
+        self._run_transaction(update_copy)
 
     def delete_book(self, isbn: str) -> None:
         """Löscht ein Buch und seine direkt abhängigen Bestandsdaten atomar."""

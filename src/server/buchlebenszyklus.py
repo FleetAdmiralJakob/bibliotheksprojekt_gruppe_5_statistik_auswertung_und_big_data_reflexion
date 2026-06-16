@@ -15,7 +15,11 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from src.server.bestand import Bibliotheksbestand
-from src.shared.domain_values import Kategorie
+from src.shared.domain_values import (
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
+    Kategorie,
+)
 from src.shared.models import BookMetadata
 
 type JsonObject = dict[str, Any]
@@ -348,6 +352,19 @@ class Buchlebenszyklus:
 
         isbn = normalize_isbn(isbn_value)
         self._bestand.add_book_copies(isbn, self._copy_count(copy_count))
+        return isbn
+
+    def exemplarstatus_aendern(
+        self,
+        isbn_value: str,
+        copy_id: str,
+        state: Exemplarzustand,
+        availability: Exemplarverfuegbarkeit,
+    ) -> str:
+        """Ändert den Status eines vorhandenen Exemplars."""
+
+        isbn = normalize_isbn(isbn_value)
+        self._bestand.update_book_copy(isbn, copy_id, state, availability)
         return isbn
 
     @staticmethod

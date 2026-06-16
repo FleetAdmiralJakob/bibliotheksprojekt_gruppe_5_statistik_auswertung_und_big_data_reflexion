@@ -1,9 +1,7 @@
 """Tests am Interface der tiefen Katalogansicht."""
 
-import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
 from pathlib import Path
 
 from src.server.bestand import Bibliotheksbestand
@@ -157,20 +155,14 @@ class KatalogansichtTests(unittest.TestCase):
         isbn = "9780306406157"
         self.bestand.add_book(self.metadata(isbn, "Exemplartest"), 5)
 
-        # Das aktuelle Bestandsinterface kann Statuswerte noch nicht ändern.
-        # Die Fixture setzt deshalb ausschließlich erlaubte Schemawerte; die
-        # Beobachtung erfolgt danach nur über das Katalogansicht-Interface.
         fixtures = list(zip(Exemplarzustand, Exemplarverfuegbarkeit, strict=True))
-        with closing(sqlite3.connect(self.database_path)) as connection, connection:
-            for number, (state, availability) in enumerate(fixtures, start=1):
-                connection.execute(
-                    """
-                    UPDATE book_copies
-                    SET state = ?, availability = ?
-                    WHERE copy_id = ?
-                    """,
-                    (state, availability, f"{isbn}-{number:03}"),
-                )
+        for number, (state, availability) in enumerate(fixtures, start=1):
+            self.bestand.update_book_copy(
+                isbn,
+                f"{isbn}-{number:03}",
+                state,
+                availability,
+            )
 
         book = self.katalog.buch(isbn)
 

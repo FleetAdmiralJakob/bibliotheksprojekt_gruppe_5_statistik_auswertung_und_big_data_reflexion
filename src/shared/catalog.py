@@ -6,6 +6,8 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 from src.shared.domain_values import (
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
     Kategorie,
     Verfuegbarkeitsklasse,
 )
@@ -115,6 +117,15 @@ class Bibliothekszugang(Protocol):
         exemplaranzahl: int | str,
     ) -> Buchansicht:
         """Fügt einem vorhandenen Buch neue Exemplare hinzu."""
+
+    def exemplarstatus_aendern(
+        self,
+        isbn: str,
+        exemplar_id: str,
+        zustand: Exemplarzustand,
+        verfuegbarkeit: Exemplarverfuegbarkeit,
+    ) -> Buchansicht:
+        """Ändert Zustand und Verfügbarkeit eines vorhandenen Exemplars."""
 
     def buch_entfernen(self, isbn: str) -> str:
         """Entfernt ein Buch aus dem Bibliotheksbestand."""

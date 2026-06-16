@@ -12,6 +12,8 @@ from src.server.buchlebenszyklus import Buchlebenszyklus
 from src.shared.domain_values import (
     DEFAULT_COPY_AVAILABILITY,
     DEFAULT_COPY_STATE,
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
     Kategorie,
 )
 from src.shared.models import BookMetadata
@@ -232,6 +234,46 @@ class BibliotheksbestandTests(unittest.TestCase):
         self.assertEqual(
             [(copy.state, copy.availability) for copy in copies[-2:]],
             [(DEFAULT_COPY_STATE, DEFAULT_COPY_AVAILABILITY)] * 2,
+        )
+
+    def test_updates_copy_state_and_availability(self):
+        """Ein vorhandenes Exemplar kann über das Bestandsinterface geändert werden."""
+
+        self.bestand.add_book(self.metadata(), 2)
+
+        self.bestand.update_book_copy(
+            "9780306406157",
+            "9780306406157-002",
+            Exemplarzustand.GUT,
+            Exemplarverfuegbarkeit.RESERVIERT,
+        )
+
+        copies = self.bestand.get_book_copies("9780306406157")
+        self.assertEqual(
+            [(copy.state, copy.availability) for copy in copies],
+            [
+                (DEFAULT_COPY_STATE, DEFAULT_COPY_AVAILABILITY),
+                (Exemplarzustand.GUT, Exemplarverfuegbarkeit.RESERVIERT),
+            ],
+        )
+
+    def test_rejects_unknown_copy_status_updates(self):
+        """Unbekannte Exemplare ändern keinen gespeicherten Status."""
+
+        self.bestand.add_book(self.metadata(), 1)
+
+        with self.assertRaises(ValueError):
+            self.bestand.update_book_copy(
+                "9780306406157",
+                "9780306406157-999",
+                Exemplarzustand.SCHLECHT,
+                Exemplarverfuegbarkeit.DEFEKT,
+            )
+
+        copies = self.bestand.get_book_copies("9780306406157")
+        self.assertEqual(
+            [(copy.state, copy.availability) for copy in copies],
+            [(DEFAULT_COPY_STATE, DEFAULT_COPY_AVAILABILITY)],
         )
 
     def test_rejects_more_than_999_total_copies_without_partial_insert(self):

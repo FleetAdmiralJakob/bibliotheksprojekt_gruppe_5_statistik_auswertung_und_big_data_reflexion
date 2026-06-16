@@ -16,7 +16,11 @@ from src.server.backend import Bibliotheksbackend
 from src.server.bestand import Bibliotheksbestand
 from src.server.http_adapter import create_app
 from src.shared.catalog import Katalogsuche
-from src.shared.domain_values import Kategorie
+from src.shared.domain_values import (
+    Exemplarverfuegbarkeit,
+    Exemplarzustand,
+    Kategorie,
+)
 from src.shared.models import BookMetadata
 
 
@@ -92,11 +96,22 @@ class HttpTransportTests(unittest.TestCase):
         metadata = self.client.buch_aufnehmen("978-0-306-40615-7", 2)
         page = self.client.suchen(Katalogsuche(isbn=metadata.isbn))
         book = self.client.exemplare_hinzufuegen(metadata.isbn, 2)
+        updated_book = self.client.exemplarstatus_aendern(
+            metadata.isbn,
+            "9780306406157-002",
+            Exemplarzustand.GUT,
+            Exemplarverfuegbarkeit.RESERVIERT,
+        )
         removed_isbn = self.client.buch_entfernen(metadata.isbn)
 
         self.assertEqual(page.zeilen[0].titel, "Remote Test")
         self.assertEqual(len(book.exemplare), 4)
         self.assertEqual(book.exemplare[-1].exemplar_id, "9780306406157-004")
+        self.assertEqual(updated_book.exemplare[1].zustand, Exemplarzustand.GUT.label)
+        self.assertEqual(
+            updated_book.exemplare[1].verfuegbarkeit,
+            Exemplarverfuegbarkeit.RESERVIERT.label,
+        )
         self.assertEqual(removed_isbn, metadata.isbn)
         self.assertEqual(
             self.client.suchen(Katalogsuche(isbn=metadata.isbn)).zeilen,
@@ -113,3 +128,4 @@ class HttpTransportTests(unittest.TestCase):
         self.assertIn("BookMetadata", schemas)
         self.assertIn("BuchaufnahmeRequest", schemas)
         self.assertIn("ExemplaraufnahmeRequest", schemas)
+        self.assertIn("ExemplarstatusAenderungRequest", schemas)
