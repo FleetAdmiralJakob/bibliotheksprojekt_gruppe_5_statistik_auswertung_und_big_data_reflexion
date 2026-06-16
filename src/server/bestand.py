@@ -351,6 +351,30 @@ class Bibliotheksbestand:
 
         self._run_transaction(update_copy)
 
+    def delete_book_copy(self, isbn: str, copy_id: str) -> None:
+        """Löscht ein einzelnes Exemplar eines vorhandenen Buches atomar."""
+
+        copy_id = copy_id.strip()
+        if not copy_id:
+            raise ValueError("Die Exemplar-ID darf nicht leer sein.")
+
+        def delete_existing_copy(cursor: sqlite3.Cursor) -> None:
+            if not cursor.execute(
+                "SELECT 1 FROM books WHERE isbn = ?",
+                (isbn,),
+            ).fetchone():
+                raise ValueError("Ein Buch mit dieser ISBN ist nicht vorhanden.")
+
+            cursor.execute("DELETE FROM borrowings WHERE copy_id = ?", (copy_id,))
+            result = cursor.execute(
+                "DELETE FROM book_copies WHERE isbn = ? AND copy_id = ?",
+                (isbn, copy_id),
+            )
+            if result.rowcount == 0:
+                raise ValueError("Ein Exemplar mit dieser ID ist nicht vorhanden.")
+
+        self._run_transaction(delete_existing_copy)
+
     def delete_book(self, isbn: str) -> None:
         """Löscht ein Buch und seine direkt abhängigen Bestandsdaten atomar."""
 

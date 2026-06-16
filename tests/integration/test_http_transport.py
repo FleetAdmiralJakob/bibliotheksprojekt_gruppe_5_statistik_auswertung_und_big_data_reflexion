@@ -102,6 +102,10 @@ class HttpTransportTests(unittest.TestCase):
             Exemplarzustand.GUT,
             Exemplarverfuegbarkeit.RESERVIERT,
         )
+        book_after_copy_deletion = self.client.exemplar_entfernen(
+            metadata.isbn,
+            "9780306406157-003",
+        )
         removed_isbn = self.client.buch_entfernen(metadata.isbn)
 
         self.assertEqual(page.zeilen[0].titel, "Remote Test")
@@ -111,6 +115,11 @@ class HttpTransportTests(unittest.TestCase):
         self.assertEqual(
             updated_book.exemplare[1].verfuegbarkeit,
             Exemplarverfuegbarkeit.RESERVIERT.label,
+        )
+        self.assertEqual(len(book_after_copy_deletion.exemplare), 3)
+        self.assertNotIn(
+            "9780306406157-003",
+            [copy.exemplar_id for copy in book_after_copy_deletion.exemplare],
         )
         self.assertEqual(removed_isbn, metadata.isbn)
         self.assertEqual(

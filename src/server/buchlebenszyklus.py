@@ -367,6 +367,13 @@ class Buchlebenszyklus:
         self._bestand.update_book_copy(isbn, copy_id, state, availability)
         return isbn
 
+    def exemplar_entfernen(self, isbn_value: str, copy_id: str) -> str:
+        """Löscht ein einzelnes Exemplar eines vorhandenen Buches."""
+
+        isbn = normalize_isbn(isbn_value)
+        self._bestand.delete_book_copy(isbn, copy_id)
+        return isbn
+
     @staticmethod
     def _copy_count(copy_count: int | str) -> int:
         """Prüft eine eingegebene Exemplarzahl für alle Aufnahmewege."""

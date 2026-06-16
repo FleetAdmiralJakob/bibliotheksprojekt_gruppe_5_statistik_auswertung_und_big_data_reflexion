@@ -100,6 +100,10 @@ def create_app(backend: Bibliotheksbackend) -> FastAPI:
             request.verfuegbarkeit,
         )
 
+    @app.delete("/v1/buecher/{isbn}/exemplare/{exemplar_id}")
+    def delete_book_copy(isbn: str, exemplar_id: str) -> Buchansicht:
+        return backend.exemplar_entfernen(isbn, exemplar_id)
+
     @app.delete("/v1/buecher/{isbn}")
     def delete_book(isbn: str) -> BuchentfernungResponse:
         return BuchentfernungResponse(isbn=backend.buch_entfernen(isbn))

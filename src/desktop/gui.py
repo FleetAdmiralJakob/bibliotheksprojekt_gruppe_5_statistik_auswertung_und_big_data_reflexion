@@ -1532,8 +1532,10 @@ class LibraryApp:
                 return None
             return values[0], values[1], values[2]
 
-        def update_edit_button(_event: tk.Event | None = None) -> None:
-            edit_copy_btn.set_enabled(selected_copy_values() is not None)
+        def update_copy_actions(_event: tk.Event | None = None) -> None:
+            has_selected_copy = selected_copy_values() is not None
+            edit_copy_btn.set_enabled(has_selected_copy)
+            delete_copy_btn.set_enabled(has_selected_copy)
 
         def open_selected_copy_editor() -> None:
             selected_copy = selected_copy_values()
@@ -1561,6 +1563,36 @@ class LibraryApp:
             copy_table.selection_set(item)
             copy_table.focus(item)
             open_selected_copy_editor()
+
+        def delete_selected_copy() -> None:
+            selected_copy = selected_copy_values()
+            if selected_copy is None:
+                return
+
+            copy_id, _state_label, _availability_label = selected_copy
+            confirmed = messagebox.askyesno(
+                "Exemplar wirklich löschen?",
+                f'Möchtest du das Exemplar "{copy_id}" wirklich löschen?\n\n'
+                "Der Bucheintrag bleibt erhalten.",
+                icon="warning",
+                parent=detail,
+            )
+            if not confirmed:
+                return
+
+            try:
+                updated_book = self.bibliothek.exemplar_entfernen(book.isbn, copy_id)
+            except Exception as error:
+                messagebox.showerror(
+                    "Exemplar konnte nicht gelöscht werden",
+                    f"Das Exemplar konnte nicht gelöscht werden.\n\n{error}",
+                    parent=detail,
+                )
+                self.status_var.set("Fehler beim Löschen des Exemplars")
+                return
+
+            render_copies(updated_book)
+            self.status_var.set(f'Exemplar "{copy_id}" wurde gelöscht')
 
         def render_copies(updated_book: Buchansicht) -> None:
             """Aktualisiert Zusammenfassung und Tabelle nach einer Änderung."""
@@ -1594,7 +1626,7 @@ class LibraryApp:
                         ),
                         tags=(copy.klasse.value,),
                     )
-                update_edit_button()
+                update_copy_actions()
                 return
 
             copy_table.insert(
@@ -1604,7 +1636,7 @@ class LibraryApp:
                 values=("", "Keine Exemplare gespeichert", ""),
                 tags=(Verfuegbarkeitsklasse.UNBEKANNT.value,),
             )
-            update_edit_button()
+            update_copy_actions()
 
         edit_copy_btn = ActionButton(
             copies_header,
@@ -1614,6 +1646,14 @@ class LibraryApp:
         )
         edit_copy_btn.grid(row=0, column=1, sticky="e", padx=(0, 10))
         edit_copy_btn.set_enabled(False)
+        delete_copy_btn = ActionButton(
+            copies_header,
+            text="Exemplar löschen",
+            command=delete_selected_copy,
+            variant="secondary",
+        )
+        delete_copy_btn.grid(row=0, column=2, sticky="e", padx=(0, 10))
+        delete_copy_btn.set_enabled(False)
         add_copy_btn = ActionButton(
             copies_header,
             text="Exemplar hinzufügen",
@@ -1624,7 +1664,7 @@ class LibraryApp:
                 on_success=render_copies,
             ),
         )
-        add_copy_btn.grid(row=0, column=2, sticky="e")
+        add_copy_btn.grid(row=0, column=3, sticky="e")
 
         scrollbar = ttk.Scrollbar(
             copies_table_frame, orient="vertical", command=copy_table.yview
@@ -1632,7 +1672,7 @@ class LibraryApp:
         copy_table.configure(yscrollcommand=scrollbar.set)
         copy_table.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
-        copy_table.bind("<<TreeviewSelect>>", update_edit_button)
+        copy_table.bind("<<TreeviewSelect>>", update_copy_actions)
         copy_table.bind("<Double-1>", open_copy_editor_from_event)
         render_copies(book)
 

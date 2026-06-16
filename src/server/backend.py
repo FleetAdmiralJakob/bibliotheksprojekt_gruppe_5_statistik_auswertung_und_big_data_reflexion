@@ -70,6 +70,15 @@ class Bibliotheksbackend:
         )
         return self._katalog.buch(normalized_isbn)
 
+    def exemplar_entfernen(self, isbn: str, exemplar_id: str) -> Buchansicht:
+        """Entfernt ein einzelnes Exemplar aus dem Bibliotheksbestand."""
+
+        normalized_isbn = self._buchlebenszyklus.exemplar_entfernen(
+            isbn,
+            exemplar_id,
+        )
+        return self._katalog.buch(normalized_isbn)
+
     def buch_entfernen(self, isbn: str) -> str:
         """Entfernt ein Buch aus dem Bibliotheksbestand."""
 

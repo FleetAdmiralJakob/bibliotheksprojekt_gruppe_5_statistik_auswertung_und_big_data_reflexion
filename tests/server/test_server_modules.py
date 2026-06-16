@@ -257,6 +257,26 @@ class BibliotheksbestandTests(unittest.TestCase):
             ],
         )
 
+    def test_deletes_single_copy_without_removing_book(self):
+        """Ein einzelnes Exemplar kann entfernt werden, ohne das Buch zu löschen."""
+
+        self.bestand.add_book(self.metadata(), 3)
+
+        self.bestand.delete_book_copy("9780306406157", "9780306406157-002")
+
+        copies = self.bestand.get_book_copies("9780306406157")
+        self.assertEqual(
+            [copy.copy_id for copy in copies],
+            [
+                "9780306406157-001",
+                "9780306406157-003",
+            ],
+        )
+        self.assertEqual(
+            self.bestand.search_books("", "", "", "9780306406157")[0].copy_count,
+            2,
+        )
+
     def test_rejects_unknown_copy_status_updates(self):
         """Unbekannte Exemplare ändern keinen gespeicherten Status."""
 
@@ -275,6 +295,16 @@ class BibliotheksbestandTests(unittest.TestCase):
             [(copy.state, copy.availability) for copy in copies],
             [(DEFAULT_COPY_STATE, DEFAULT_COPY_AVAILABILITY)],
         )
+
+    def test_rejects_unknown_copy_deletion(self):
+        """Unbekannte Exemplare werden nicht stillschweigend gelöscht."""
+
+        self.bestand.add_book(self.metadata(), 1)
+
+        with self.assertRaises(ValueError):
+            self.bestand.delete_book_copy("9780306406157", "9780306406157-999")
+
+        self.assertEqual(len(self.bestand.get_book_copies("9780306406157")), 1)
 
     def test_rejects_more_than_999_total_copies_without_partial_insert(self):
         """Die Gesamtgrenze wird innerhalb derselben Transaktion geschützt."""
@@ -354,6 +384,22 @@ class BuchlebenszyklusTests(unittest.TestCase):
 
         self.assertEqual(isbn, "9780306406157")
         self.assertEqual(len(self.bestand.get_book_copies(isbn)), 3)
+
+    def test_removes_single_copy_with_normalized_isbn(self):
+        """Auch das Entfernen eines Exemplars normalisiert die ISBN."""
+
+        self.bestand.add_book(BibliotheksbestandTests.metadata(), 2)
+
+        isbn = self.lebenszyklus.exemplar_entfernen(
+            "978-0-306-40615-7",
+            "9780306406157-001",
+        )
+
+        self.assertEqual(isbn, "9780306406157")
+        self.assertEqual(
+            [copy.copy_id for copy in self.bestand.get_book_copies(isbn)],
+            ["9780306406157-002"],
+        )
 
 
 if __name__ == "__main__":

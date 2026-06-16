@@ -110,6 +110,18 @@ class HttpBibliothekszugang:
             ),
         )
 
+    def exemplar_entfernen(self, isbn: str, exemplar_id: str) -> Buchansicht:
+        """Entfernt ein einzelnes Exemplar über den Server."""
+
+        return self._request(
+            "DELETE",
+            (
+                f"/v1/buecher/{quote(isbn, safe='')}/exemplare/"
+                f"{quote(exemplar_id, safe='')}"
+            ),
+            Buchansicht,
+        )
+
     def buch_entfernen(self, isbn: str) -> str:
         """Entfernt ein Buch über den Server."""
 

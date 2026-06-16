@@ -127,5 +127,8 @@ class Bibliothekszugang(Protocol):
     ) -> Buchansicht:
         """Ändert Zustand und Verfügbarkeit eines vorhandenen Exemplars."""
 
+    def exemplar_entfernen(self, isbn: str, exemplar_id: str) -> Buchansicht:
+        """Entfernt ein einzelnes Exemplar aus dem Bibliotheksbestand."""
+
     def buch_entfernen(self, isbn: str) -> str:
         """Entfernt ein Buch aus dem Bibliotheksbestand."""
