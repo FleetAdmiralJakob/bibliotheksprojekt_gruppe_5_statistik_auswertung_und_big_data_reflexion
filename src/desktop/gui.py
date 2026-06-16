@@ -12,6 +12,7 @@ für Widgets, Farben und Dialoge zuständig.
 
 import sys
 import tkinter as tk
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
@@ -582,6 +583,208 @@ AVAILABILITY_ROW_STYLES = {
     Verfuegbarkeitsklasse.PROBLEM: ("#FFEDD5", "#9A3412"),
     Verfuegbarkeitsklasse.UNBEKANNT: (COLORS["surface"], COLORS["text"]),
 }
+
+PIE_CHART_WIDTH = 250
+PIE_CHART_HEIGHT = 168
+PIE_DIAMETER = 92
+PIE_LEFT = 18
+PIE_TOP = 48
+PIE_LEGEND_LEFT = 130
+PIE_LEGEND_TOP = 46
+PIE_LEGEND_WIDTH = 106
+PIE_LEGEND_LINE_HEIGHT = 21
+
+STATE_CHART_COLORS = {
+    Exemplarzustand.SCHLECHT.label: "#DC2626",
+    Exemplarzustand.IN_ORDNUNG.label: "#D97706",
+    Exemplarzustand.GUT.label: "#0D9488",
+    Exemplarzustand.SEHR_GUT.label: "#16A34A",
+    Exemplarzustand.NEU.label: "#2563EB",
+}
+AVAILABILITY_CHART_COLORS = {
+    Exemplarverfuegbarkeit.VERFUEGBAR.label: "#16A34A",
+    Exemplarverfuegbarkeit.AUSGELIEHEN.label: "#DC2626",
+    Exemplarverfuegbarkeit.RESERVIERT.label: "#D97706",
+    Exemplarverfuegbarkeit.DEFEKT.label: "#EA580C",
+    Exemplarverfuegbarkeit.VERLOREN.label: "#64748B",
+}
+FALLBACK_CHART_COLORS = (
+    DESIGN_SYSTEM["primary"],
+    DESIGN_SYSTEM["secondary"],
+    DESIGN_SYSTEM["accent"],
+    "#7C3AED",
+    "#0891B2",
+    "#DB2777",
+)
+
+
+def _ordered_chart_counts(
+    values: tuple[str, ...],
+    preferred_order: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Zählt Diagrammwerte in fachlicher Reihenfolge statt nach Tabellenposition."""
+
+    counts = Counter(values)
+    ordered_counts: list[tuple[str, int]] = []
+    for label in preferred_order:
+        count = counts.pop(label, 0)
+        if count:
+            ordered_counts.append((label, count))
+
+    ordered_counts.extend(sorted(counts.items()))
+    return tuple(ordered_counts)
+
+
+class PieChart(tk.Canvas):
+    """Kompaktes Kreisdiagramm mit Legende für die Exemplar-Detailansicht."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        title: str,
+        palette: dict[str, str],
+    ) -> None:
+        super().__init__(
+            master,
+            width=PIE_CHART_WIDTH,
+            height=PIE_CHART_HEIGHT,
+            background=COLORS["surface"],
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self.title = title
+        self.palette = palette
+        self.title_font = tkfont.Font(
+            root=self,
+            family="Segoe UI Semibold",
+            size=10,
+        )
+        self.legend_font = tkfont.Font(root=self, family="Segoe UI", size=9)
+        self.empty_font = tkfont.Font(root=self, family="Segoe UI", size=9)
+
+    def render(self, counts: tuple[tuple[str, int], ...]) -> None:
+        """Zeichnet das Diagramm anhand bereits aggregierter Anzeigenwerte."""
+
+        self.delete("all")
+        self.create_text(
+            0,
+            4,
+            text=self.title,
+            fill=COLORS["text"],
+            font=self.title_font,
+            anchor="nw",
+        )
+
+        total = sum(count for _, count in counts)
+        if total == 0:
+            self._draw_empty_chart()
+            return
+
+        self._draw_slices(counts, total)
+        self._draw_legend(counts)
+
+    def _draw_empty_chart(self) -> None:
+        x0 = PIE_LEFT
+        y0 = PIE_TOP
+        x1 = x0 + PIE_DIAMETER
+        y1 = y0 + PIE_DIAMETER
+        self.create_oval(
+            x0,
+            y0,
+            x1,
+            y1,
+            fill=_lighten(COLORS["border"], 0.72),
+            outline=COLORS["border"],
+        )
+        self.create_text(
+            x0 + PIE_DIAMETER / 2,
+            y0 + PIE_DIAMETER / 2,
+            text="Keine Daten",
+            fill=COLORS["muted"],
+            font=self.empty_font,
+            anchor="center",
+        )
+
+    def _draw_slices(self, counts: tuple[tuple[str, int], ...], total: int) -> None:
+        x0 = PIE_LEFT
+        y0 = PIE_TOP
+        x1 = x0 + PIE_DIAMETER
+        y1 = y0 + PIE_DIAMETER
+
+        if len(counts) == 1:
+            label, _count = counts[0]
+            self.create_oval(
+                x0,
+                y0,
+                x1,
+                y1,
+                fill=self._color_for(label, 0),
+                outline=COLORS["surface"],
+                width=2,
+            )
+            return
+
+        start = 90.0
+        used_extent = 0.0
+        last_index = len(counts) - 1
+        for index, (label, count) in enumerate(counts):
+            extent = (
+                360.0 - used_extent if index == last_index else 360.0 * count / total
+            )
+            self.create_arc(
+                x0,
+                y0,
+                x1,
+                y1,
+                start=start,
+                extent=-extent,
+                fill=self._color_for(label, index),
+                outline=COLORS["surface"],
+                width=2,
+                style=tk.PIESLICE,
+            )
+            start -= extent
+            used_extent += extent
+
+    def _draw_legend(self, counts: tuple[tuple[str, int], ...]) -> None:
+        for index, (label, count) in enumerate(counts):
+            y = PIE_LEGEND_TOP + index * PIE_LEGEND_LINE_HEIGHT
+            color = self._color_for(label, index)
+            self.create_rectangle(
+                PIE_LEGEND_LEFT,
+                y + 3,
+                PIE_LEGEND_LEFT + 10,
+                y + 13,
+                fill=color,
+                outline=color,
+            )
+            text = self._fit_legend_text(f"{label} ({count})")
+            self.create_text(
+                PIE_LEGEND_LEFT + 16,
+                y,
+                text=text,
+                fill=COLORS["text"],
+                font=self.legend_font,
+                anchor="nw",
+            )
+
+    def _fit_legend_text(self, text: str) -> str:
+        if self.legend_font.measure(text) <= PIE_LEGEND_WIDTH:
+            return text
+
+        suffix = "..."
+        available_width = PIE_LEGEND_WIDTH - self.legend_font.measure(suffix)
+        shortened = text
+        while shortened and self.legend_font.measure(shortened) > available_width:
+            shortened = shortened[:-1]
+        return f"{shortened.rstrip()}{suffix}" if shortened else suffix
+
+    def _color_for(self, label: str, index: int) -> str:
+        return self.palette.get(
+            label,
+            FALLBACK_CHART_COLORS[index % len(FALLBACK_CHART_COLORS)],
+        )
 
 
 class LibraryApp:
@@ -1211,8 +1414,8 @@ class LibraryApp:
         detail = tk.Toplevel(self.root)
         self._apply_window_icon(detail)
         detail.title(f"Exemplare: {book.titel}")
-        detail.geometry("760x460")
-        detail.minsize(620, 360)
+        detail.geometry("1040x640")
+        detail.minsize(900, 420)
         detail.configure(background=COLORS["background"])
         detail.transient(self.root)
         self.copy_detail_windows[isbn] = detail
@@ -1232,14 +1435,14 @@ class LibraryApp:
             container,
             text=book.titel,
             style="Title.TLabel",
-            wraplength=680,
+            wraplength=940,
         ).grid(row=0, column=0, sticky="w")
 
         ttk.Label(
             container,
             text=book.metadatenzeile,
             style="Subtitle.TLabel",
-            wraplength=700,
+            wraplength=960,
         ).grid(row=1, column=0, sticky="w", pady=(4, 18))
 
         # Ersetze die einfache Frame-Karte durch einen abgerundeten Frame für
@@ -1254,10 +1457,11 @@ class LibraryApp:
         )
         copies_card.grid(row=2, column=0, sticky="nsew")
         copies_card.inner_frame.columnconfigure(0, weight=1)
+        copies_card.inner_frame.columnconfigure(1, weight=0)
         copies_card.inner_frame.rowconfigure(2, weight=1)
 
         copies_header = ttk.Frame(copies_card.inner_frame, style="Card.TFrame")
-        copies_header.grid(row=0, column=0, sticky="ew")
+        copies_header.grid(row=0, column=0, columnspan=2, sticky="ew")
         copies_header.columnconfigure(0, weight=1)
         ttk.Label(copies_header, text="Exemplare", style="Section.TLabel").grid(
             row=0, column=0, sticky="w"
@@ -1267,12 +1471,27 @@ class LibraryApp:
             copies_card.inner_frame,
             textvariable=summary_var,
             style="Field.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
 
         copies_table_frame = ttk.Frame(copies_card.inner_frame, style="Card.TFrame")
-        copies_table_frame.grid(row=2, column=0, sticky="nsew")
+        copies_table_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 18))
         copies_table_frame.columnconfigure(0, weight=1)
         copies_table_frame.rowconfigure(0, weight=1)
+
+        charts_frame = ttk.Frame(copies_card.inner_frame, style="Card.TFrame")
+        charts_frame.grid(row=2, column=1, sticky="n")
+        state_chart = PieChart(
+            charts_frame,
+            title="Zustände",
+            palette=STATE_CHART_COLORS,
+        )
+        state_chart.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        availability_chart = PieChart(
+            charts_frame,
+            title="Verfügbarkeiten",
+            palette=AVAILABILITY_CHART_COLORS,
+        )
+        availability_chart.grid(row=1, column=0, sticky="ew")
 
         columns = ("copy_id", "state", "availability")
         copy_table = ttk.Treeview(
@@ -1304,10 +1523,14 @@ class LibraryApp:
             if not selection:
                 return None
 
-            values = copy_table.item(selection[0], "values")
+            raw_values = copy_table.item(selection[0], "values")
+            if not isinstance(raw_values, tuple):
+                return None
+
+            values = tuple(str(value) for value in raw_values)
             if len(values) < 3 or not values[0]:
                 return None
-            return str(values[0]), str(values[1]), str(values[2])
+            return values[0], values[1], values[2]
 
         def update_edit_button(_event: tk.Event | None = None) -> None:
             edit_copy_btn.set_enabled(selected_copy_values() is not None)
@@ -1343,6 +1566,18 @@ class LibraryApp:
             """Aktualisiert Zusammenfassung und Tabelle nach einer Änderung."""
 
             summary_var.set(updated_book.exemplarzusammenfassung)
+            state_chart.render(
+                _ordered_chart_counts(
+                    tuple(copy.zustand for copy in updated_book.exemplare),
+                    COPY_STATE_LABELS,
+                )
+            )
+            availability_chart.render(
+                _ordered_chart_counts(
+                    tuple(copy.verfuegbarkeit for copy in updated_book.exemplare),
+                    COPY_AVAILABILITY_LABELS,
+                )
+            )
             copy_table.delete(*copy_table.get_children())
             if updated_book.exemplare:
                 # Texte und semantische Verfügbarkeitsklasse kommen fertig aus
