@@ -1248,19 +1248,27 @@ class LibraryApp:
         copies_card.inner_frame.columnconfigure(0, weight=1)
         copies_card.inner_frame.rowconfigure(2, weight=1)
 
-        ttk.Label(
-            copies_card.inner_frame, text="Exemplare", style="Section.TLabel"
-        ).grid(row=0, column=0, sticky="w")
+        copies_header = ttk.Frame(copies_card.inner_frame, style="Card.TFrame")
+        copies_header.grid(row=0, column=0, sticky="ew")
+        copies_header.columnconfigure(0, weight=1)
+        ttk.Label(copies_header, text="Exemplare", style="Section.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
         summary_var = tk.StringVar(value=book.exemplarzusammenfassung)
         ttk.Label(
             copies_card.inner_frame,
             textvariable=summary_var,
             style="Field.TLabel",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
+        ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+
+        copies_table_frame = ttk.Frame(copies_card.inner_frame, style="Card.TFrame")
+        copies_table_frame.grid(row=2, column=0, sticky="nsew")
+        copies_table_frame.columnconfigure(0, weight=1)
+        copies_table_frame.rowconfigure(0, weight=1)
 
         columns = ("copy_id", "state", "availability")
         copy_table = ttk.Treeview(
-            copies_card.inner_frame,
+            copies_table_frame,
             columns=columns,
             show="headings",
             selectmode="browse",
@@ -1312,7 +1320,7 @@ class LibraryApp:
             )
 
         add_copy_btn = ActionButton(
-            copies_card.inner_frame,
+            copies_header,
             text="Exemplar hinzufügen",
             command=lambda: self.open_add_copies_dialog(
                 parent=detail,
@@ -1324,11 +1332,11 @@ class LibraryApp:
         add_copy_btn.grid(row=0, column=1, sticky="e")
 
         scrollbar = ttk.Scrollbar(
-            copies_card.inner_frame, orient="vertical", command=copy_table.yview
+            copies_table_frame, orient="vertical", command=copy_table.yview
         )
         copy_table.configure(yscrollcommand=scrollbar.set)
-        copy_table.grid(row=2, column=0, sticky="nsew")
-        scrollbar.grid(row=2, column=1, sticky="ns")
+        copy_table.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
         render_copies(book)
 
         self.status_var.set(f'Exemplare von "{book.titel}" geöffnet')
