@@ -42,6 +42,9 @@ LANGUAGES: dict[str, str] = {
 def normalize_isbn(value: str) -> str:
     """Entfernt Trennzeichen und prüft eine ISBN‑10 oder ISBN‑13."""
 
+    # Upper ist für ISBN-10 wichtig, weil die Prüfziffer manchmal X (steht für 10) lautet, dadurch wird
+    # die Prüfziffer korrekt erkannt, selbst wenn sie fälschlicherweise klein geschrieben
+    # ist und die ISBN korrekt validiert.
     isbn = re.sub(r"[\s-]", "", value).upper()
     if len(isbn) == 10 and re.fullmatch(r"\d{9}[\dX]", isbn):
         total = sum(
