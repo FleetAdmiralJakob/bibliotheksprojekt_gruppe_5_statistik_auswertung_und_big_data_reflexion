@@ -30,7 +30,7 @@ DNB_SRU_URL = "https://services.dnb.de/sru/dnb"
 USER_AGENT = "SchoolLibraryCatalog/1.0 (educational project)"
 MARC_NAMESPACE = "http://www.loc.gov/MARC21/slim"
 
-LANGUAGES = {
+LANGUAGES: dict[str, str] = {
     "de": "Deutsch",
     "deu": "Deutsch",
     "ger": "Deutsch",
@@ -96,11 +96,20 @@ def _load_xml(url: str) -> ElementTree.Element | None:
 
 
 def _language_from_edition(edition: Mapping[str, Any] | None) -> str:
-    languages = edition.get("languages", []) if edition else []
-    if not languages:
+    languages = edition.get("languages") if edition else None
+    if not isinstance(languages, Sequence) or isinstance(languages, str):
         return ""
-    code = languages[0].get("key", "").rsplit("/", 1)[-1].lower()
-    return LANGUAGES.get(code, code.upper())
+    first_language = languages[0] if languages else None
+    if not isinstance(first_language, Mapping):
+        return ""
+
+    language_key = first_language.get("key")
+    if not isinstance(language_key, str):
+        return ""
+
+    code = language_key.rsplit("/", 1)[-1].lower()
+    language = LANGUAGES.get(code)
+    return language if language is not None else code.upper()
 
 
 def _category_from_subjects(subjects: Sequence[Mapping[str, Any]]) -> Kategorie:
