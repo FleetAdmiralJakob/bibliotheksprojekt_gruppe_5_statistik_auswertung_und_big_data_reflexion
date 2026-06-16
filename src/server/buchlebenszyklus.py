@@ -53,7 +53,7 @@ def normalize_isbn(value: str) -> str:
         )
         if total % 11 == 0:
             return isbn
-    elif len(isbn) == 13 and isbn.isdigit():
+    elif len(isbn) == 13 and isbn.isdigit() and isbn.startswith(("978", "979")):
         total = sum(
             int(char) * (1 if index % 2 == 0 else 3)
             for index, char in enumerate(isbn[:12])
