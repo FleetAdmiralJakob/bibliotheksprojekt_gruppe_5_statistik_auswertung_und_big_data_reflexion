@@ -58,6 +58,7 @@ COPY_AVAILABILITY_BY_LABEL = {
 }
 COPY_STATE_LABELS = tuple(COPY_STATE_BY_LABEL)
 COPY_AVAILABILITY_LABELS = tuple(COPY_AVAILABILITY_BY_LABEL)
+CATEGORY_LABELS = tuple(category.label for category in Kategorie)
 
 # -----------------------------------------------------------------------------
 # Design System
@@ -608,6 +609,14 @@ AVAILABILITY_CHART_COLORS = {
     Exemplarverfuegbarkeit.DEFEKT.label: "#EA580C",
     Exemplarverfuegbarkeit.VERLOREN.label: "#64748B",
 }
+CATEGORY_CHART_COLORS = {
+    Kategorie.BELLETRISTIK.label: "#2563EB",
+    Kategorie.SACHBUCH.label: "#0D9488",
+    Kategorie.WISSENSCHAFT.label: "#DC2626",
+    Kategorie.GESCHICHTE.label: "#D97706",
+    Kategorie.TECHNOLOGIE.label: "#7C3AED",
+    Kategorie.SONSTIGES.label: "#64748B",
+}
 FALLBACK_CHART_COLORS = (
     DESIGN_SYSTEM["primary"],
     DESIGN_SYSTEM["secondary"],
@@ -635,8 +644,16 @@ def _ordered_chart_counts(
     return tuple(ordered_counts)
 
 
+def _category_chart_counts(
+    rows: tuple[Katalogzeile, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Zählt die Kategorien genau der aktuell dargestellten Katalogzeilen."""
+
+    return _ordered_chart_counts(tuple(row.kategorie for row in rows), CATEGORY_LABELS)
+
+
 class PieChart(tk.Canvas):
-    """Kompaktes Kreisdiagramm mit Legende für die Exemplar-Detailansicht."""
+    """Kompaktes Kreisdiagramm mit Legende für aggregierte Katalogwerte."""
 
     def __init__(
         self,
@@ -809,8 +826,8 @@ class LibraryApp:
         # Fenstertitel und Startgröße. ``minsize`` verhindert, dass das Fenster
         # so klein gezogen wird, dass Eingabefelder und Tabelle unbrauchbar sind.
         self.root.title("Bibliothek")
-        self.root.geometry("1040x680")
-        self.root.minsize(820, 560)
+        self.root.geometry("1180x700")
+        self.root.minsize(960, 560)
         self.root.configure(background=COLORS["background"])
         self._load_branding()
 
@@ -1129,12 +1146,27 @@ class LibraryApp:
         )
         results_card.grid(row=2, column=0, sticky="nsew")
         results_card.inner_frame.columnconfigure(0, weight=1)
+        results_card.inner_frame.columnconfigure(2, weight=0)
         results_card.inner_frame.rowconfigure(1, weight=1)
         ttk.Label(
             results_card.inner_frame,
             text="Suchergebnisse",
             style="Section.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 12))
+
+        self.category_chart = PieChart(
+            results_card.inner_frame,
+            title="Kategorien",
+            palette=CATEGORY_CHART_COLORS,
+        )
+        self.category_chart.grid(
+            row=0,
+            column=2,
+            rowspan=2,
+            sticky="n",
+            padx=(20, 0),
+        )
+        self.category_chart.render(())
 
         # Interne Spaltennamen. Sie werden zum Lesen und Sortieren verwendet,
         # während die deutschen Texte weiter unten nur zur Anzeige dienen.
@@ -1338,6 +1370,7 @@ class LibraryApp:
         # ersetzt. Die ISBN dient zugleich als stabile Treeview-Identität.
         self.results.delete(*self.results.get_children())
         self.catalog_rows_by_isbn = {row.isbn: row for row in page.zeilen}
+        self.category_chart.render(_category_chart_counts(page.zeilen))
 
         for book in page.zeilen:
             self.results.insert(
@@ -2073,6 +2106,7 @@ class LibraryApp:
         # Sichtbare und typisierte Ergebniszeilen werden gemeinsam verworfen.
         self.results.delete(*self.results.get_children())
         self.catalog_rows_by_isbn.clear()
+        self.category_chart.render(())
 
         # Sortierung vollständig zurücksetzen.
         self.sort_column = None
