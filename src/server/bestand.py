@@ -320,9 +320,7 @@ class Bibliotheksbestand:
         try:
             normalized_availability = Exemplarverfuegbarkeit(availability)
         except ValueError as error:
-            raise ValueError(
-                "Die Verfügbarkeit des Exemplars ist ungültig."
-            ) from error
+            raise ValueError("Die Verfügbarkeit des Exemplars ist ungültig.") from error
 
         copy_id = copy_id.strip()
         if not copy_id:
